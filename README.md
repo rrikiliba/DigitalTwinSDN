@@ -30,5 +30,7 @@ Nel Terminale 3,  eseguo lo script che ho creato (digital_twin.py):
 python3 digital_twin.py
 ```
 
-
+IMPORTANTE:
+ho aggiunto un script python per velocizzare la generazione della mininet, che parla con ryu sulla porta 6633, per maggiori info andate a vedere su
+project_structure.md, in cui ho definito anche qualche dettaglio sul controller della SDN digital twin
 
