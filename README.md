@@ -5,7 +5,7 @@
 Terminale 1: Lancio il controller con i moduli necessari per le API.
 
 ```bash
-ryu-manager ryu.app.simple_switch_13 ryu.app.ofctl_rest ryu.app.rest_topology
+ryu-manager ryu.app.simple_switch_13 ryu.app.ofctl_rest ryu.app.ws_topology
 ```
 - simple_switch_13: È lo switch vero e proprio, permette di scambiare pacchetti.
 - ofctl_rest: Abilita le API per le statistiche (traffico/flussi).
