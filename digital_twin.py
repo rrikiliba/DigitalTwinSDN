@@ -1,141 +1,111 @@
-import requests
-import time
-import json
-import os
+import logging
+from mininet.net import Mininet
+from mininet.node import Host, OVSSwitch, DefaultController, RemoteController
+from mininet.link import Link
+from mininet.clean import cleanup
 
-# --- CONFIGURAZIONE ---
-RYU_IP = "127.0.0.1"
-RYU_PORT = "8080"
-BASE_URL = f"http://{RYU_IP}:{RYU_PORT}"
-POLLING_INTERVAL = 3  # Secondi tra ogni aggiornamento
-OUTPUT_FILE = "digital_twin_data.json"
+logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
+logger = logging.getLogger(__name__)
 
-class DigitalTwin:
-    def __init__(self):
-        self.network_data = {}      # Contiene gli Switch e le Statistiche
-        self.network_links = []     # Contiene i collegamenti (Link)
-        self.last_update_time = time.time()
-
-    def get_topology(self):
-        """Recupera la lista degli switch"""
-        try:
-            url = f"{BASE_URL}/v1.0/topology/switches"
-            response = requests.get(url)
-            if response.status_code == 200:
-                switches = response.json()
-                for sw in switches:
-                    dpid = sw['dpid']
-                    if dpid not in self.network_data:
-                        self.network_data[dpid] = {
-                            "ports": {}, 
-                            "last_seen": time.ctime()
-                        }
-                return True
-        except Exception as e:
-            print(f"Errore Topologia Switch: {e}")
-        return False
-    
-    def get_links(self):
-        """Recupera la lista dei collegamenti tra switch"""
-        try:
-            url = f"{BASE_URL}/v1.0/topology/links"
-            response = requests.get(url)
-            if response.status_code == 200:
-                self.network_links = response.json()
-                return True
-        except Exception as e:
-            print(f"Errore Topologia Link: {e}")
-        return False
-
-    def update_stats(self):
-        """Recupera stats e CALCOLA la velocità (Bps)"""
-        current_time = time.time()
-        time_diff = current_time - self.last_update_time
+class DigitalTwin(Mininet):
+    def __init__(self, **kwargs):
+        self.dpid_to_name = {}
+        self.mac_to_name = {}
+        self.switch_count = 0
+        self.host_count = 0
+        kwargs.setdefault('host', Host)
+        kwargs.setdefault('switch', OVSSwitch)
+        kwargs.setdefault('controller', DefaultController)
+        kwargs.setdefault('link', Link)
+        super().__init__(**kwargs)
         
-        if time_diff < 0.1: return 
 
-        for dpid in self.network_data:
-            try:
-                # Nota: l'API richiede il dpid in formato intero
-                url = f"{BASE_URL}/stats/port/{int(dpid, 16)}"
-                response = requests.get(url)
-                
-                if response.status_code == 200:
-                    # La chiave nel JSON di risposta è l'intero convertito in stringa
-                    key_str = str(int(dpid, 16))
-                    if key_str in response.json():
-                        stats_list = response.json()[key_str]
-                        
-                        for port in stats_list:
-                            port_no = str(port['port_no'])
-                            if port_no == 'LOCAL': continue 
-                            
-                            rx_now = port['rx_bytes']
-                            tx_now = port['tx_bytes']
-                            
-                            # Dati precedenti
-                            port_data = self.network_data[dpid]["ports"].get(port_no, {})
-                            rx_prev = port_data.get("total_rx", rx_now)
-                            tx_prev = port_data.get("total_tx", tx_now)
-                            
-                            # Calcolo Velocità
-                            rx_speed = (rx_now - rx_prev) / time_diff
-                            tx_speed = (tx_now - tx_prev) / time_diff
-                            
-                            # Aggiornamento dati
-                            self.network_data[dpid]["ports"][port_no] = {
-                                "total_rx": rx_now,
-                                "total_tx": tx_now,
-                                "speed_rx_bps": round(rx_speed, 2),
-                                "speed_tx_bps": round(tx_speed, 2)
-                            }
-            except Exception as e:
-                print(f"Errore Stats {dpid}: {e}")
+    def event_switch_enter(self, switch_data):
+        dpid = switch_data.get("dpid")
         
-        self.last_update_time = current_time
+        # Check if we already have a short name for this DPID
+        if dpid in self.dpid_to_name:
+            switch_name = self.dpid_to_name[dpid]
+            logger.info(f"Switch {switch_name} (DPID: {dpid}) is already known.")
+        else:
+            # Assign a new sequential short name (s1, s2, ...)
+            self.switch_count += 1
+            switch_name = f"s{self.switch_count}"
+            
+            logger.info(f"** NEW SWITCH DETECTED ** -> {switch_name}")
+            self.addSwitch(switch_name, dpid=dpid)
+            self.dpid_to_name[dpid] = switch_name
+        
+        port_names = [p['name'] for p in switch_data.get('ports', [])]
+        logger.info(f"  Ports reported: {', '.join(port_names)}")
 
-    def save_to_json(self):
-        """Salva lo stato COMPLETO (Switch + Link) su file"""
-        full_twin_data = {
-            "timestamp": time.ctime(),
-            "switches": self.network_data,
-            "links": self.network_links
-        }
-        with open(OUTPUT_FILE, 'w') as f:
-            json.dump(full_twin_data, f, indent=4)
 
-    def display_console(self):
-        os.system('clear') 
-        print(f"--- DIGITAL TWIN MONITOR [Update ogni {POLLING_INTERVAL}s] ---")
-        print(f"Status: {len(self.network_data)} Switch rilevati, {len(self.network_links)} Link attivi.\n")
+    def event_host_add(self, host_data):
+        mac = host_data.get("mac")
+        ipv4 = host_data.get("ipv4", [])
+        port_info = host_data.get("port", {})
+        dpid_hex = port_info.get("dpid")
         
-        for dpid, data in self.network_data.items():
-            print(f"SWITCH {dpid}")
-            for p, p_data in data['ports'].items():
-                rx_spd = p_data['speed_rx_bps']
-                tx_spd = p_data['speed_tx_bps']
-                print(f"   Porta {p}: RX {rx_spd} B/s  |  TX {tx_spd} B/s")
-        print(f"\n[Dati salvati in {OUTPUT_FILE}]")
+        # Check if we already have a short name for this MAC
+        if mac in self.mac_to_name:
+            host_name = self.mac_to_name[mac]
+            logger.info(f"Host {host_name} (MAC: {mac}) is already registered.")
+        else:
+            # Assign a new sequential short name (h1, h2, ...)
+            self.host_count += 1
+            host_name = f"h{self.host_count}"
 
-def main():
-    twin = DigitalTwin()
-    print("Avvio Digital Twin... Attendi il primo ciclo.")
-    time.sleep(1)
-    
-    while True:
-        # 1. Recupera la struttura fisica
-        twin.get_topology()
-        twin.get_links()
+            logger.info(f"** NEW HOST DETECTED ** -> {host_name}")
+            host_params = {'mac': mac}
+            if ipv4:
+                host_params['ip'] = ipv4[0] if ipv4[0] else None
+            self.addHost(host_name, **host_params)
+            self.mac_to_name[mac] = host_name
+
+        switch_name = self.dpid_to_name.get(dpid_hex)
         
-        # 2. Recupera i dati dinamici
-        twin.update_stats()
+        if not switch_name:
+            logger.warning(f"Mininet node name for DPID {dpid_hex} is unknown. Cannot create link.")
+            return
+
+        if self.linksBetween(self.get(host_name), self.get(switch_name)):
+            logger.info(f"Link between {host_name} and {switch_name} appears to exist.")
+        else:
+            logger.info(f"** ADDING LINK **: {host_name} <-> {switch_name}")
+            self.addLink(self.get(host_name), self.get(switch_name))
+
+
+    async def topology_update(self, message):
+        method = message.get("method")
+        params = message.get("params", [])
+
+        if not method or not params:
+            logger.error("Invalid message format (missing method or params)")
+            return
+
+        data = params[0]
+
+        handler_name = f"event_{method.split('_', 1)[1]}" if method.startswith("event_") else method
+        handler = getattr(self, handler_name, None)
         
-        # 3. Salva e Mostra
-        twin.save_to_json()   
-        twin.display_console()
-        
-        # 4. Attendi
-        time.sleep(POLLING_INTERVAL)
+        if handler:
+            handler(data)
+        else:
+            logger.info(f"Message method '{method}' was ignored.")
 
 if __name__ == "__main__":
-    main()
+    from rpc_server import WebsocketRPCServer
+    import asyncio
+
+    ryu = RemoteController('ryu', ip='127.0.0.1', port=6666)
+    net = DigitalTwin(controller=ryu, build=False)
+
+    rpc = WebsocketRPCServer('ws://127.0.0.1:8080/v1.0/topology/ws', callback=net.topology_update)
+
+    try:
+        loop = asyncio.get_event_loop()
+        loop.run_until_complete(rpc.serve_forever())
+    except KeyboardInterrupt:
+        rpc.log.info("Client stopped by user.")
+        net.stop()
+        cleanup()
