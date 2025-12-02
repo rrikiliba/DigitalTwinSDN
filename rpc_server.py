@@ -26,7 +26,7 @@ class WebsocketRPCServer:
             self.log.info("Attempting connection...")
             
             try:
-                async with websockets.connect(self.url, open_timeout=10) as websocket:
+                async with websockets.connect(self.url) as websocket:
                     self.log.info("Connection established. Listening for messages...")
                     reconnect_delay = 1
 
@@ -55,7 +55,8 @@ class WebsocketRPCServer:
                                         rpc_result = await self.callback(parsed_message)
                                         self.log.info(f"Callback successful. Result type: {type(rpc_result).__name__}")
                                     except Exception as cb_e:
-                                        self.log.error(f"Error executing user callback for ID {response_id}: {cb_e}")
+                                        error_type = type(cb_e).__name__
+                                        self.log.error(f"Error executing user callback for ID {response_id}. {error_type}: {cb_e}")
                                 
                                 rpc_response = {
                                     "jsonrpc": "2.0",
@@ -78,12 +79,12 @@ class WebsocketRPCServer:
 
             except Exception as e:
                 error_type = type(e).__name__
-                self.log.error(f"{error_type} encountered. Retrying in {reconnect_delay}s...")
+                self.log.error(f"{error_type} encountered: {e}\nRetrying in {reconnect_delay}s...")
                 await asyncio.sleep(reconnect_delay)
                 reconnect_delay = min(reconnect_delay * 2, 30)
 
 if __name__ == "__main__":
-    DEFAULT_WS_URL = "ws://127.0.0.1:8080/v1.0/topology/ws"
+    DEFAULT_WS_URL = "ws://127.0.0.1:6060/v1.0/topology/ws"
 
     rpc = WebsocketRPCServer(DEFAULT_WS_URL)
     
