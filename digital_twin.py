@@ -2,20 +2,24 @@ import logging
 from mininet.net import Mininet
 from mininet.node import RemoteController, OVSSwitch
 from mininet.clean import cleanup
-from mininet.link import Link
-
-logging.basicConfig(level=logging.INFO, format='[%(asctime)s] [%(levelname)s] [TWIN] %(message)s')
-logger = logging.getLogger(__name__)
 
 class DigitalTwin(Mininet):
-    def __init__(self, **kwargs):
+    def __init__(self, name: str = 'TWN', **kwargs):
+        # For fancy logging
+        logging.basicConfig(level=logging.INFO, format='[%(asctime)s] [%(levelname)s] [%(logger_name)s] %(message)s')
+        self.log = logging.LoggerAdapter(logging.getLogger(__name__), {'logger_name': name})
+        # A series of dictionaries to keep track of node names
         self.dpid_to_name = {}
         self.mac_to_name = {}
         self.dpid_port_to_mac = {}
+        # keep counts of hosts and switches in order to name them
         self.switch_count = 0
         self.host_count = 0
         super().__init__(**kwargs)
         
+    def start(self):
+        self.log.info("[+] Starting Mininet...")
+        return super().start()
 
     def event_switch_enter(self, switch_data):
         dpid = switch_data.get("dpid")
@@ -23,13 +27,13 @@ class DigitalTwin(Mininet):
         # Check if we already have a short name for this DPID
         if dpid in self.dpid_to_name:
             switch_name = self.dpid_to_name[dpid]
-            logger.info(f"Switch {switch_name} (DPID: {dpid}) is already known.")
+            self.log.info(f"[_] Switch {switch_name} (DPID: {dpid}) is already known.")
         else:
-            # Assign a new sequential short name (s1, s2, ...)
+            # Assign a new sequential short name (twn-s1, twn-s2, ...)
             self.switch_count += 1
-            switch_name = f"twin-s{self.switch_count}"
+            switch_name = f"twn-s{self.switch_count}"
             
-            logger.info(f"** NEW SWITCH DETECTED ** -> {switch_name}")
+            self.log.info(f"[+] New switch detected: {switch_name}")
             
             # Add the switch to the topology
             s = self.addSwitch(switch_name, dpid=dpid)
@@ -52,7 +56,7 @@ class DigitalTwin(Mininet):
             if p_no and p_mac:
                 self.dpid_port_to_mac[(dpid, p_no)] = p_mac
 
-        logger.info(f"  Ports reported: {', '.join(port_names)}")
+        self.log.info(f"  Ports reported: {', '.join(port_names)}")
 
 
     def event_host_add(self, host_data):
@@ -66,19 +70,19 @@ class DigitalTwin(Mininet):
         # If the MAC address detected as a "Host" is actually one of our 
         # Switch Port MACs, it is likely an LLDP packet being misidentified.
         if mac in self.dpid_port_to_mac.values():
-            logger.warning(f"Ignoring Host Add for MAC {mac} - it belongs to a known Switch Port (Ghost Host detected).")
+            self.log.warning(f"[_] Ignoring Host Add for MAC {mac} - it belongs to a known Switch Port (Ghost Host detected).")
             return
         
         # Check if we already have a short name for this MAC
         if mac in self.mac_to_name:
             host_name = self.mac_to_name[mac]
-            logger.info(f"Host {host_name} (MAC: {mac}) is already registered.")
+            self.log.info(f"[_] Host {host_name} (MAC: {mac}) is already registered.")
         else:
             # Assign a new sequential short name (h1, h2, ...)
             self.host_count += 1
-            host_name = f"twin-h{self.host_count}"
+            host_name = f"twn-h{self.host_count}"
 
-            logger.info(f"** NEW HOST DETECTED ** -> {host_name}")
+            self.log.info(f"[+] New host detected: {host_name}")
             host_params = {'mac': mac}
             if ipv4:
                 host_params['ip'] = ipv4[0] if ipv4[0] else None
@@ -88,7 +92,7 @@ class DigitalTwin(Mininet):
         switch_name = self.dpid_to_name.get(dpid_hex)
         
         if not switch_name:
-            logger.warning(f"Mininet node name for DPID {dpid_hex} is unknown. Cannot create link.")
+            self.log.warning(f"[!] Mininet node name for DPID {dpid_hex} is unknown. Cannot create link.")
             return
 
         host_node = self.get(host_name)
@@ -97,9 +101,9 @@ class DigitalTwin(Mininet):
         links = self.linksBetween(host_node, switch_node)
         
         if len(links) > 0:
-            logger.info(f"Link between {host_name} and {switch_name} appears to exist.")
+            self.log.info(f"[_] Link between {host_name} and {switch_name} appears to exist.")
         else:
-            logger.info(f"** ADDING LINK **: {host_name} <-> {switch_name}")
+            self.log.info(f"[+] Adding link: {host_name} <-> {switch_name}")
             
             # Determine MAC for the switch-side interface
             link_params = {}
@@ -130,16 +134,16 @@ class DigitalTwin(Mininet):
         dst_port = link_data.get("dst", {}).get("port_no")
 
         if not src_dpid or not dst_dpid:
-            logger.error("Link add message missing source or destination DPID.")
+            self.log.error("[!] Link add message missing source or destination DPID.")
             return
 
         src_name = self.dpid_to_name.get(src_dpid)
         dst_name = self.dpid_to_name.get(dst_dpid)
 
         if not src_name or not dst_name:
-            logger.warning(
-                f"Cannot add link: One or both switches are unknown (Src DPID: {src_dpid}, Dst DPID: {dst_dpid}). "
-                f"Waiting for switch_enter events. Names: {src_name} <-> {dst_name}"
+            self.log.warning(
+                f"[!] Cannot add link: One or both switches are unknown (Src DPID: {src_dpid}, Dst DPID: {dst_dpid}). "
+                f"[!] Waiting for switch_enter events. Names: {src_name} <-> {dst_name}"
             )
             return
 
@@ -147,10 +151,10 @@ class DigitalTwin(Mininet):
         dst_node = self.get(dst_name)
 
         if self.linksBetween(src_node, dst_node):
-            logger.info(f"Link between {src_name} and {dst_name} already exists.")
+            self.log.info(f"[_] Link between {src_name} and {dst_name} already exists.")
             return
 
-        logger.info(f"** ADDING SWITCH-TO-SWITCH LINK **: {src_name} <-> {dst_name}")
+        self.log.info(f"[+] Adding switch to switch link: {src_name} <-> {dst_name}")
         
         try:
             # Determine MACs for both interfaces
@@ -173,7 +177,7 @@ class DigitalTwin(Mininet):
                     dst_node.attach(link.intf2)
 
         except Exception as e:
-            logger.warning(f"Error creating link between {src_name} and {dst_name}: {e}")
+            self.log.warning(f"[!] Error creating link between {src_name} and {dst_name}: {e}")
 
 
     async def topology_update(self, message):
@@ -181,7 +185,7 @@ class DigitalTwin(Mininet):
         params = message.get("params", [])
 
         if not method or not params:
-            logger.error("Invalid message format (missing method or params)")
+            self.log.error("[!] Invalid message format (missing method or params)")
             return
 
         data = params[0]
@@ -190,24 +194,17 @@ class DigitalTwin(Mininet):
         handler = getattr(self, handler_name, None)
         
         if handler:
-            # CRITICAL FIX: Removed net.stop() and net.start()
-            # We only execute the handler. The handler is responsible for 
-            # live-updating the topology (attaching ports, starting switches).
             handler(data)
         else:
-            logger.info(f"Message method '{method}' was ignored.")
+            self.log.info(f"[-] Message method '{method}' was ignored.")
 
 if __name__ == "__main__":
     from rpc_server import WebsocketRPCServer
     import asyncio
     
-    # Initialize Mininet
     net = DigitalTwin(controller=RemoteController, switch=OVSSwitch)
-    net.addController('twin-c0')
+    net.addController('twn-c0')
 
-    # Start the network ONCE here. 
-    # This creates the initial environment. New nodes will be added dynamically.
-    logger.info("Starting Mininet core...")
     net.start()
 
     rpc = WebsocketRPCServer('ws://127.0.0.1:6060/v1.0/topology/ws', callback=net.topology_update)
@@ -216,6 +213,6 @@ if __name__ == "__main__":
         loop = asyncio.get_event_loop()
         loop.run_until_complete(rpc.serve_forever())
     except KeyboardInterrupt:
-        rpc.log.info("Client stopped by user.")
+        rpc.log.info("[-] Client stopped by user.")
         net.stop()
         cleanup()

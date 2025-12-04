@@ -1,4 +1,5 @@
 import requests
+import shutil
 import time
 
 RYU_API_HOST = "127.0.0.1"
@@ -46,9 +47,11 @@ def pretty_print_topology(switches_data: list, links_data: list, hosts_data: lis
     """
     Prints the fetched topology data in a structured, readable format.
     """
-    print("\n" + "="*80)
-    print("                      R Y U   T O P O L O G Y   R E P O R T")
-    print("="*80)
+    size = shutil.get_terminal_size().columns
+    padding = (size - 37) // 2
+    print("\n" + "="*size)
+    print(" "*padding, "R Y U   T O P O L O G Y   R E P O R T")
+    print("="*size)
 
     # 1. Switches
     print(f"\n--- SWITCHES ({len(switches_data)}) ---")
@@ -101,7 +104,7 @@ def pretty_print_topology(switches_data: list, links_data: list, hosts_data: lis
         )
         print(host_str)
         
-    print("\n" + "="*80)
+    print("\n" + "="*size)
 
 
 def main():
