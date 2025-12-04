@@ -84,7 +84,8 @@ class WebsocketRPCServer:
                 reconnect_delay = min(reconnect_delay * 2, 30)
 
 if __name__ == "__main__":
-    DEFAULT_WS_URL = "ws://127.0.0.1:6060/v1.0/topology/ws"
+    DEFAULT_WS_PORT = 8080
+    DEFAULT_WS_URL = f"ws://127.0.0.1:{DEFAULT_WS_PORT}/v1.0/topology/ws"
 
     rpc = WebsocketRPCServer(DEFAULT_WS_URL)
     
