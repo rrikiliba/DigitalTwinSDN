@@ -9,9 +9,7 @@ RETRY_DELAY = 5
 POLL_INTERVAL = 2
 
 def fetch_api_data(endpoint: str):
-    """
-    Fetches data from a specific Ryu REST API endpoint.
-    """
+
     url = f"{RYU_API_BASE_URL}{endpoint}"
     # print(f"\n-> Polling {url}...") # Commentato per pulire l'output a video
 
@@ -28,37 +26,30 @@ def fetch_api_data(endpoint: str):
         return None
 
 def filter_stale_hosts(hosts_data, switches_data):
-    """
-    FILTRO HOST FANTASMA:
-    Rimuove dalla lista degli host quelli che sono collegati a switch
-    non più presenti nella lista switches_data.
-    """
+
     if not switches_data:
-        # Se non ci sono switch, non possono esserci host validi
+
         return []
     
     if not hosts_data:
         return []
     
-    # Creiamo un set con tutti i DPID degli switch attualmente attivi per ricerca veloce
+
     active_switch_dpids = set(sw.get('dpid') for sw in switches_data)
     
     valid_hosts = []
     for host in hosts_data:
-        # Recuperiamo i dati della porta a cui l'host dice di essere collegato
+
         port_info = host.get('port', {})
         host_dpid = port_info.get('dpid')
         
-        # Se il DPID dello switch dell'host è nella lista degli switch attivi, l'host è valido
         if host_dpid in active_switch_dpids:
             valid_hosts.append(host)
             
     return valid_hosts
 
 def pretty_print_topology(switches_data, links_data, hosts_data):
-    """
-    Stampa la topologia filtrata e pulita.
-    """
+
     size = shutil.get_terminal_size().columns
     padding = (size - 37) // 2
     print("\n" + "="*size)
