@@ -3,7 +3,7 @@ import shutil
 import time
 
 RYU_API_HOST = "127.0.0.1"
-RYU_API_PORT = 8080
+RYU_API_PORT = 6060
 RYU_API_BASE_URL = f"http://{RYU_API_HOST}:{RYU_API_PORT}"
 RETRY_DELAY = 5
 POLL_INTERVAL = 2
@@ -11,7 +11,7 @@ POLL_INTERVAL = 2
 def fetch_api_data(endpoint: str):
 
     url = f"{RYU_API_BASE_URL}{endpoint}"
-    # print(f"\n-> Polling {url}...") # Commentato per pulire l'output a video
+    
 
     try:
         response = requests.get(url, timeout=10)
@@ -28,7 +28,6 @@ def fetch_api_data(endpoint: str):
 def filter_stale_hosts(hosts_data, switches_data):
 
     if not switches_data:
-
         return []
     
     if not hosts_data:
@@ -40,9 +39,17 @@ def filter_stale_hosts(hosts_data, switches_data):
     valid_hosts = []
     for host in hosts_data:
 
+
         port_info = host.get('port', {})
         host_dpid = port_info.get('dpid')
         
+
+        
+        port_info = host.get('port', {})
+        host_dpid = port_info.get('dpid')
+        
+        
+
         if host_dpid in active_switch_dpids:
             valid_hosts.append(host)
             

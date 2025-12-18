@@ -14,34 +14,34 @@ class WebsocketRPCServer:
     async def serve_forever(self, reconnect_delay=1):
         if reconnect_delay > 30:
             reconnect_delay = 30
-        
+
         while True:
             self.log.info("[_] Attempting connection...")
-            
+
             try:
-                async with websockets.connect(self.url) as websocket:
+                
+                async with websockets.connect(self.url, ping_interval=None) as websocket:
                     self.log.info("[+] Connection established. Listening for messages...")
                     reconnect_delay = 1
 
                     async for message in websocket:
-                        
+
                         if isinstance(message, bytes):
                             message = message.decode('utf-8')
 
-                        # Fixes messages wrapped in literal Python byte string notation (b'...')
                         if message.startswith("b'") and message.endswith("'"):
                             message = message[2:-1]
-                        
+
                         try:
                             self.log.info("[+] Message Received:")
 
                             parsed_message = json.loads(message)
-                            print(json.dumps(parsed_message, indent=4))
                             
+
                             if 'id' in parsed_message:
                                 response_id = parsed_message['id']
                                 rpc_result = None
-                                
+
                                 if self.callback:
                                     self.log.info(f"[+] Calling user callback for ID: {response_id}")
                                     try:
@@ -50,13 +50,13 @@ class WebsocketRPCServer:
                                     except Exception as cb_e:
                                         error_type = type(cb_e).__name__
                                         self.log.error(f"[!] Error executing user callback. {error_type}: {cb_e}")
-                                
+
                                 rpc_response = {
                                     "jsonrpc": "2.0",
                                     "result": rpc_result,
                                     "id": response_id
                                 }
-                                
+
                                 await websocket.send(json.dumps(rpc_response))
                                 self.log.info(f"[^] Sent RPC Acknowledgment (ID: {response_id})")
 
@@ -67,7 +67,7 @@ class WebsocketRPCServer:
                             self.log.error(f"[!] Failed to decode JSON message (Type: {type(message).__name__}): {message}")
                         except Exception as e:
                             self.log.error(f"[!] Error processing message: {e}")
-                    
+
                     self.log.warning("[!] Connection closed. Attempting reconnect.")
 
             except Exception as e:
@@ -77,11 +77,11 @@ class WebsocketRPCServer:
                 reconnect_delay = min(reconnect_delay * 2, 30)
 
 if __name__ == "__main__":
-    DEFAULT_WS_PORT = 8080
+    DEFAULT_WS_PORT = 6060
     DEFAULT_WS_URL = f"ws://127.0.0.1:{DEFAULT_WS_PORT}/v1.0/topology/ws"
 
     rpc = WebsocketRPCServer(DEFAULT_WS_URL)
-    
+
     try:
         loop = asyncio.get_event_loop()
         loop.run_until_complete(rpc.serve_forever())

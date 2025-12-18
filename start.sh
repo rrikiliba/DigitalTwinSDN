@@ -3,12 +3,26 @@ SESSION_NAME="DigitalTwinSDN"
 
 sudo -v
 
-# For each pane, clear and send the designated command
-CMD1="./mininet.sh"
-CMD2="clear; sudo python3 digital_twin.py"
-CMD3="clear; sudo python3 topology_checker.py"
-CMD4="clear; echo 'This is the Digital Twin'; ryu-manager ryu.app.simple_switch_13 ryu.app.rest_topology --observe-links"
-CMD5="clear; ryu-manager ryu.app.ws_topology ryu.app.ofctl_rest ryu.app.simple_switch_13 --wsapi-port 6060 --ofp-tcp-listen-port 6666 --observe-links"
+# --- CONFIGURAZIONE COMANDI ---
+
+# CMD1: Mininet (Il comando 'echo' simula la pressione del tasto Invio per l'input della topologia)
+CMD1="sudo ./mininet.sh"
+
+# CMD2: Manager Script (Aggiunto 'sleep 15' per aspettare che RYU si avvii bene)
+CMD2="clear; echo 'Waiting for RYU...'; sleep 15; sudo python3 digital_twin.py"
+
+# CMD3: Topology Checker (Aggiunto 'sleep 15')
+CMD3="clear; echo 'Waiting for RYU...'; sleep 15; sudo python3 topology_checker.py"
+
+# CMD4: Digital Twin Controller (Controller secondario per la rete ombra)
+# Usiamo una porta OFP diversa (6634) per non andare in conflitto con quello principale
+CMD4="clear; echo 'Twin Controller'; ryu-manager ryu.app.simple_switch_13 ryu.app.rest_topology --ofp-tcp-listen-port 6634 --observe-links"
+
+# CMD5: Live Network Controller (QUELLO IMPORTANTE)
+# Usa il comando che abbiamo verificato funzionare: porta API 6060
+CMD5="clear; echo 'Live Controller'; ryu-manager ryu.app.simple_switch_13 ryu.app.ofctl_rest ryu.app.ws_topology ryu.app.rest_topology --wsapi-port 6060 --observe-links"
+
+# --- AVVIO SESSIONE TMUX ---
 
 # Either attach to tmux session or create it
 tmux has-session -t $SESSION_NAME 2>/dev/null
@@ -18,7 +32,7 @@ if [ $? = 0 ]; then
 fi
 tmux new-session -d -s $SESSION_NAME
 
-# Set a title for each pane, so that we know what we're looking at
+# Set a title for each pane
 tmux set-option -t $SESSION_NAME status-position top
 tmux set-window-option -t $SESSION_NAME pane-border-status top
 
@@ -32,11 +46,11 @@ tmux select-pane -t 1
 tmux split-window -h -p 50
 
 # Set pane titles
-tmux select-pane -t 0 -T "Mininet (for Live Network)"
-tmux select-pane -t 1 -T "Digital Twin manager script"
-tmux select-pane -t 2 -T "Digital Twin topology checker"
-tmux select-pane -t 3 -T "Digital Twin ryu controller"
-tmux select-pane -t 4 -T "Live Network ryu controller"
+tmux select-pane -t 0 -T "1. Mininet (Live Network)"
+tmux select-pane -t 1 -T "2. Manager Script (Wait 15s)"
+tmux select-pane -t 2 -T "3. Topology Checker (Wait 15s)"
+tmux select-pane -t 3 -T "4. Twin Controller"
+tmux select-pane -t 4 -T "5. Live RYU Controller (Port 6060)"
 
 # Send the commands to the correct panes
 tmux send-keys -t $SESSION_NAME:0.0 "$CMD1" C-m
