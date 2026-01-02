@@ -1,4 +1,7 @@
 import logging
+import time
+import requests
+import asyncio
 from mininet.net import Mininet
 from mininet.node import RemoteController, OVSSwitch
 from mininet.clean import cleanup
@@ -24,6 +27,9 @@ class DigitalTwin(Mininet):
         self.switch_count = 0
         self.host_count = 0
         
+        self.last_update_time = time.time()
+        self.network_data = {}
+
         super().__init__(**kwargs)
         
     def start(self):
@@ -274,6 +280,50 @@ class DigitalTwin(Mininet):
         else:
             self.log.info(f"[-] Message method '{method}' was ignored.")
 
+    async def monitor_traffic(self):
+        while True:
+            current_time = time.time()
+            time_diff = current_time - self.last_update_time
+            
+            if time_diff >= 1.0:
+                for dpid in self.dpid_to_name:
+                    if dpid not in self.network_data:
+                        self.network_data[dpid] = {"ports": {}}
+
+                    try:
+                        url = f"http://localhost:6060/stats/port/{int(dpid, 16)}"
+                        response = requests.get(url)
+                        if response.status_code == 200:
+                            key_str = str(int(dpid, 16))
+                            if key_str in response.json():
+                                stats_list = response.json()[key_str]
+                                for port in stats_list:
+                                    port_no = str(port['port_no'])
+                                    if port_no == 'LOCAL': continue
+
+                                    rx_now = port['rx_bytes']
+                                    tx_now = port['tx_bytes']
+
+                                    port_data = self.network_data[dpid]["ports"].get(port_no, {})
+                                    rx_prev = port_data.get("total_rx", rx_now)
+                                    tx_prev = port_data.get("total_tx", tx_now)
+
+                                    rx_speed = (rx_now - rx_prev) / time_diff
+                                    tx_speed = (tx_now - tx_prev) / time_diff
+
+                                    self.network_data[dpid]["ports"][port_no] = {
+                                        "total_rx": rx_now,
+                                        "total_tx": tx_now,
+                                        "speed_rx_bps": round(rx_speed, 2),
+                                        "speed_tx_bps": round(tx_speed, 2)
+                                    }
+				    # TODO: reproduce traffic
+                    except Exception as e:
+                        print(f"Error Stats {dpid}: {e}")
+                self.last_update_time = current_time
+            
+            await asyncio.sleep(1)
+
 if __name__ == "__main__":
     from rpc_server import WebsocketRPCServer
     import asyncio
@@ -292,6 +342,7 @@ if __name__ == "__main__":
     try:
         loop = asyncio.get_event_loop()
         rpc.log.info("[+] Starting RPC Server loop. Waiting for events...")
+        loop.create_task(net.monitor_traffic())
         loop.run_until_complete(rpc.serve_forever())
     except KeyboardInterrupt:
         rpc.log.info("[-] Client stopped by user.")

@@ -12,8 +12,8 @@ sudo -v
 CMD1="./mininet.sh"
 # 2: DigitalTwin script 
 CMD2="clear; sudo python3 digital_twin.py"
-# 3: Check and print topology of the twin
-CMD3="clear; sudo python3 topology_checker.py"
+# 3: Check and print topology/network stats of the twin
+CMD3="clear; sudo python3 twin_checker.py"
 # 4: Twin ryu controller
 CMD4="clear; ryu-manager ryu.app.simple_switch_13 ryu.app.rest_topology --observe-links"
 # 5: Live ryu controller

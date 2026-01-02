@@ -8,6 +8,7 @@ RYU_API_BASE_URL = f"http://{RYU_API_HOST}:{RYU_API_PORT}"
 RETRY_DELAY = 5 
 POLL_INTERVAL = 2
 
+# TODO: report network data as well
 
 def fetch_api_data(endpoint: str):
     """
