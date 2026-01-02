@@ -1,14 +1,23 @@
 #!/bin/bash
 SESSION_NAME="DigitalTwinSDN"
 
+echo "[installing packages]"
+pip install -r requirements.txt
+
+echo "[starting session]"
 sudo -v
 
 # For each pane, clear and send the designated command
+# 1: Mininet creation and terminal
 CMD1="./mininet.sh"
+# 2: DigitalTwin script 
 CMD2="clear; sudo python3 digital_twin.py"
+# 3: Check and print topology of the twin
 CMD3="clear; sudo python3 topology_checker.py"
-CMD4="clear; echo 'This is the Digital Twin'; ryu-manager ryu.app.simple_switch_13 ryu.app.rest_topology --observe-links"
-CMD5="clear; ryu-manager ryu.app.ws_topology ryu.app.ofctl_rest ryu.app.simple_switch_13 --wsapi-port 6060 --ofp-tcp-listen-port 6666 --observe-links"
+# 4: Twin ryu controller
+CMD4="clear; ryu-manager ryu.app.simple_switch_13 ryu.app.rest_topology --observe-links"
+# 5: Live ryu controller
+CMD5="clear; ryu-manager ryu.app.gui_topology ryu.app.ws_topology ryu.app.rest_topology ryu.app.ofctl_rest ryu.app.simple_switch_13 --wsapi-port 6060 --ofp-tcp-listen-port 6666 --observe-links"
 
 # Either attach to tmux session or create it
 tmux has-session -t $SESSION_NAME 2>/dev/null
