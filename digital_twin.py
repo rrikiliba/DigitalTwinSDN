@@ -281,6 +281,8 @@ class DigitalTwin(Mininet):
             self.log.info(f"[-] Message method '{method}' was ignored.")
 
     async def monitor_traffic(self):
+	# TODO: check stats endpoint for more info: like, where is data sent from/to
+	# https://github.com/faucetsdn/ryu/blob/master/ryu/app/ofctl_rest.py
         while True:
             current_time = time.time()
             time_diff = current_time - self.last_update_time
@@ -317,12 +319,16 @@ class DigitalTwin(Mininet):
                                         "speed_rx_bps": round(rx_speed, 2),
                                         "speed_tx_bps": round(tx_speed, 2)
                                     }
-				    # TODO: reproduce traffic
+                                    await self.reproduce_traffic()
                     except Exception as e:
                         print(f"Error Stats {dpid}: {e}")
                 self.last_update_time = current_time
             
             await asyncio.sleep(1)
+
+    async def reproduce_traffic(self):
+        # TODO: reproduce all traffic via pings. Either retrieve traffic from self or pass it to the function
+        pass
 
 if __name__ == "__main__":
     from rpc_server import WebsocketRPCServer
