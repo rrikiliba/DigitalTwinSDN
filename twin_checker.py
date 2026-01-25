@@ -43,6 +43,9 @@ def fetch_api_data(endpoint: str):
         print(f"   [ERROR] An API request error occurred: {e}")
         return None
 
+def pretty_print_traffic():
+    # TODO
+    pass
 
 def pretty_print_topology(switches_data: list, links_data: list, hosts_data: list):
     """
