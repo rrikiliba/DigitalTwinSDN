@@ -154,6 +154,7 @@ class DigitalTwin(Mininet):
                 # Ensure the host interface is up
                 host_iface_name = link.intf1.name if link.intf1.node == host_node else link.intf2.name
                 host_node.cmd('ifconfig', host_iface_name, 'up')
+                host_node.cmd('iperf -s &')
 
     def event_link_add(self, link_data):
         """Handles a switch-to-switch link being discovered."""
@@ -290,7 +291,6 @@ class DigitalTwin(Mininet):
             # Check if intf1 is the switch port
             if link.intf1.node == switch_node:
                 # OVS ports might be strings or ints, verify conversion
-                link_port = self.ports.get(link.intf1, -1) 
                 # In Mininet standard, we often have to rely on port mapping logic or checking link names
                 # A more robust way in Mininet is checking the node's connections:
                 if switch_node.ports[link.intf1] == port_no:
@@ -313,6 +313,7 @@ class DigitalTwin(Mininet):
         STATS_URL = "http://localhost:6060/stats/port"
         
         while True:
+            print("   (DEBUG: Checking Live Network Traffic...)")
             current_time = time.time()
             time_diff = current_time - self.last_update_time
 
@@ -352,7 +353,8 @@ class DigitalTwin(Mininet):
                                     # Note: We focus on RX speed on the Switch, 
                                     # which corresponds to TX speed from the connected Host.
                                     rx_speed = (rx_now - rx_prev) / time_diff
-                                    
+                                    if rx_speed > 100:
+                                         print(f"   (DEBUG: Found traffic on switch {dpid} port {port_no}: {rx_speed} Bps)")
                                     # Update stored data
                                     self.network_data[dpid]["ports"][port_no] = {
                                         "total_rx": rx_now,
@@ -414,7 +416,9 @@ class DigitalTwin(Mininet):
                             # 4. Execute Ping (Async to not block the loop)
                             # Using cmdAsync allows Mininet to run this in the background
                             # -c: count, -i 0.2: fast interval, -q: quiet
-                            src_host.cmdAsync(f"ping -c {count} -i 0.2 -q {dst_host.IP()} &")
+                            #src_host.cmd(f"ping -c 500 -s 1000 -i 0.002 -q {dst_host.IP()} &")
+                            #src_host.cmd(f"iperf -c {dst_host.IP()} -u -b 0.5M -t 1 &")
+                            src_host.cmd(f"ping -c 200 -s 1400 -i 0.01 -q {dst_host.IP()} &")
 
 
 if __name__ == "__main__":

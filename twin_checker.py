@@ -5,136 +5,127 @@ import time
 RYU_API_HOST = "127.0.0.1"
 RYU_API_PORT = 8080
 RYU_API_BASE_URL = f"http://{RYU_API_HOST}:{RYU_API_PORT}"
-RETRY_DELAY = 5 
 POLL_INTERVAL = 2
 
-# TODO: report network data as well
+# Memoria Download statistics for each switch and calculate the speedper calcolare la velocità (Bytes attuali - Bytes precedenti)
+# Struttura: { "dpid:port_no": { "rx": 12345, "tx": 67890, "time": 1700000.0 } }
+prev_stats = {}
 
 def fetch_api_data(endpoint: str):
-    """
-    Fetches data from a specific Ryu REST API endpoint.
-
-    Args:
-        endpoint: The path to the API endpoint (e.g., '/v1.0/topology/switches').
-
-    Returns:
-        A list of data objects (switches, links, or hosts) on success, 
-        or None on a connection error.
-    """
     url = f"{RYU_API_BASE_URL}{endpoint}"
-    
-    print(f"\n-> Polling {url}...")
-    
     try:
-        response = requests.get(url, timeout=10)
+        response = requests.get(url, timeout=2)
         response.raise_for_status()
-        
-        # Ryu's API returns a list of dictionaries/objects
-        data = response.json()
-        print(f"   Success. Found {len(data)} items.")
-        return data
-        
-    except requests.exceptions.ConnectionError:
-        # Return None on connection failure
-        print(f"   [ERROR] Failed to connect to Ryu at {RYU_API_BASE_URL}. Ensure the controller is running and the TopologyAPI is loaded.")
-        return None
-    except requests.exceptions.RequestException as e:
-        # Return None on other request errors
-        print(f"   [ERROR] An API request error occurred: {e}")
+        return response.json()
+    except Exception:
         return None
 
-def pretty_print_traffic():
-    # TODO
-    pass
+def pretty_print_traffic(switches_data):
+    """
+    Download statistics for each switch and calculate the speed
+    """
+    global prev_stats
+    current_time = time.time()
+    
+    print(f"\n--- TRAFFIC MONITOR (Twin Network) ---")
+    
+    has_traffic = False
+
+    for sw in switches_data:
+        dpid = sw.get('dpid')
+        # L'API di Ryu per le stats è /stats/port/<dpid_in_int>
+        dpid_int = int(dpid, 16)
+        stats = fetch_api_data(f"/stats/port/{dpid_int}")
+        
+        if not stats:
+            continue
+
+        # La risposta è un dict: { "dpid_int": [ {port_stats}, ... ] }
+        key_str = str(dpid_int)
+        if key_str not in stats:
+            continue
+
+        port_list = stats[key_str]
+        
+        for p in port_list:
+            port_no = p['port_no']
+            if port_no == 'LOCAL': continue # Ignora porta interna
+            
+            # Chiave unica per questo dato
+            uid = f"{dpid}:{port_no}"
+            
+            rx_bytes = p['rx_bytes']
+            tx_bytes = p['tx_bytes']
+            
+            # Calcolo velocità se abbiamo dati precedenti
+            if uid in prev_stats:
+                last_data = prev_stats[uid]
+                time_diff = current_time - last_data['time']
+                
+                # Evita divisione per zero
+                if time_diff > 0:
+                    # Calcolo Delta
+                    rx_speed = (rx_bytes - last_data['rx']) / time_diff
+                    tx_speed = (tx_bytes - last_data['tx']) / time_diff
+                    
+                    # Converti in KB/s per leggibilità
+                    rx_kbps = rx_speed / 1024
+                    tx_kbps = tx_speed / 1024
+                    
+                    # Stampiamo solo se c'è traffico significativo (> 0.1 KB/s)
+                    if rx_kbps >= 0.0:
+                        has_traffic = True
+                        print(f"  Switch {dpid} - Port {port_no}: RX {rx_kbps:.2f} KB/s | TX {tx_kbps:.2f} KB/s")
+
+            # Aggiorna lo stato precedente
+            prev_stats[uid] = {
+                "rx": rx_bytes, 
+                "tx": tx_bytes, 
+                "time": current_time
+            }
+
+    if not has_traffic:
+        print("  (No active traffic flow detected > 0.1 KB/s)")
 
 def pretty_print_topology(switches_data: list, links_data: list, hosts_data: list):
-    """
-    Prints the fetched topology data in a structured, readable format.
-    """
     size = shutil.get_terminal_size().columns
-    padding = (size - 37) // 2
     print("\n" + "="*size)
-    print(" "*padding, "R Y U   T O P O L O G Y   R E P O R T")
+    print(" "*((size-30)//2), "TWIN NETWORK STATUS")
     print("="*size)
 
     # 1. Switches
-    print(f"\n--- SWITCHES ({len(switches_data)}) ---")
-    if not switches_data:
-        print("No switches found or controller is not running.")
-    for sw in switches_data:
-        dpid = sw.get('dpid', 'N/A')
-        dpid_str = str(dpid).zfill(16)
-        ports = sw.get('ports', [])
-        
-        port_details = [f"Port {p.get('port_no')}" for p in ports]
-        
-        print(f"  [DPID: {dpid_str}]")
-        print(f"    - Ports ({len(ports)} total): {', '.join(port_details)}")
-
-
-    # 2. Links
-    print(f"\n--- LINKS ({len(links_data)}) ---")
-    if not links_data:
-        print("No links found.")
-    for link in links_data:
-        src = link.get('src', {})
-        dst = link.get('dst', {})
-        
-        src_dpid = str(src.get('dpid', 'N/A')).zfill(16)
-        src_port = src.get('port_no', 'N/A')
-        dst_dpid = str(dst.get('dpid', 'N/A')).zfill(16)
-        dst_port = dst.get('port_no', 'N/A')
-        
-        link_str = (
-            f"  {src_dpid}:{src_port} "
-            f"--> {dst_dpid}:{dst_port}"
-        )
-        print(link_str)
-
-    # 3. Hosts
-    print(f"\n--- HOSTS ({len(hosts_data)}) ---")
-    if not hosts_data:
-        print("No hosts found.")
-    for host in hosts_data:
-        mac = host.get('mac', 'N/A')
-        ipv4 = host.get('ipv4', ['N/A'])
-        port = host.get('port', {})
-        dpid = str(port.get('dpid', 'N/A')).zfill(16)
-        port_no = port.get('port_no', 'N/A')
-        
-        host_str = (
-            f"  [MAC: {mac}] | [IP: {ipv4}] "
-            f"connected to switch {dpid} on port {port_no}"
-        )
-        print(host_str)
+    print(f"\n--- TOPOLOGY: {len(switches_data)} Switches, {len(links_data)} Links, {len(hosts_data)} Hosts ---")
+    
+    # 2. Traffic (Chiamata alla nuova funzione)
+    pretty_print_traffic(switches_data)
         
     print("\n" + "="*size)
 
-
 def main():
-    """
-    Main function to run the continuous topology poll and report.
-    """
-    print(f"Starting continuous polling of Ryu topology every {POLL_INTERVAL} seconds. Press Ctrl+C to stop.")
+    print(f"Starting Twin Checker (Polling every {POLL_INTERVAL}s)...")
     
     while True:
-        # Fetch data for all topology components
-        switches = fetch_api_data('/v1.0/topology/switches')
-        links = fetch_api_data('/v1.0/topology/links')
-        hosts = fetch_api_data('/v1.0/topology/hosts')
-        
-        # Only print the topology report if all fetches succeeded (i.e., returned lists, not None)
-        if switches is not None and links is not None and hosts is not None:
-            pretty_print_topology(switches, links, hosts)
-        else:
-            # If any fetch failed (returned None), indicate a pause before retry.
-            print(f"Connection failed. Retrying in {POLL_INTERVAL} seconds...")
-
         try:
+            # Fetch base topology
+            switches = fetch_api_data('/v1.0/topology/switches')
+            links = fetch_api_data('/v1.0/topology/links')
+            hosts = fetch_api_data('/v1.0/topology/hosts')
+            
+            if switches is not None and links is not None and hosts is not None:
+                # Pulisce lo schermo per effetto "dashboard"
+                print("\033[H\033[J", end="") 
+                pretty_print_topology(switches, links, hosts)
+            else:
+                print(f"Connection failed/incomplete. Retrying...")
+
             time.sleep(POLL_INTERVAL)
+            
         except KeyboardInterrupt:
-            print("\nPolling stopped by user (Ctrl+C). Exiting.")
+            print("\nExiting.")
             break
+        except Exception as e:
+            print(f"Error: {e}")
+            time.sleep(POLL_INTERVAL)
 
 if __name__ == "__main__":
     main()
