@@ -7,13 +7,34 @@ pip install -r requirements.txt
 echo "[starting session]"
 sudo -v
 
+
+run_mininet() {
+    local prefix="sudo mn --controller=remote,ip=127.0.0.1:6666 --topo="
+    local default_topo="linear,2"
+    local input_topo
+
+    # Clear the screen first
+    clear
+
+    # Prompt the user
+    read -r -p "Enter your mininet topology (empty for default [$default_topo]): " input_topo
+
+    # Execute with the user's input or the default
+    if [[ -z "$input_topo" ]]; then
+        $prefix$default_topo
+    else
+        $prefix$input_topo
+    fi
+}
+export -f run_mininet
+
 # For each pane, clear and send the designated command
 # 1: Mininet creation and terminal
-CMD1="./mininet.sh"
+CMD1="run_mininet"
 # 2: DigitalTwin script 
-CMD2="clear; sudo python3 digital_twin.py"
+CMD2="clear; sudo python3 src/digital_twin.py"
 # 3: Check and print topology/network stats of the twin
-CMD3="clear; sudo python3 twin_checker.py"
+CMD3="clear; sudo python3 src/utils/twin_checker.py"
 # 4: Twin ryu controller
 CMD4="clear; ryu-manager ryu.app.simple_switch_13 ryu.app.rest_topology ryu.app.ofctl_rest --observe-links"
 # 5: Live ryu controller
