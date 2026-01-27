@@ -19,7 +19,8 @@ async def traffic_reproduce(self, batch):
         self.log.info(f"[>] Replaying: {src_host.name} -> {dst_ip} [Size: {payload_size}]")
         
         # Execute ping in background
-        src_host.cmd(f"ping -c {payload_num} -s {payload_size} {dst_ip} &")
+        node = self.get(src_host)
+        node.cmd(f"ping -c {payload_num} -s {payload_size} {dst_ip} &")
 
 async def traffic_monitor(self):
             
