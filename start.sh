@@ -2,7 +2,7 @@
 SESSION_NAME="DigitalTwinSDN"
 
 echo "[installing packages]"
-pip install -r requirements.txt
+pip install --disable-pip-version-check -r requirements.txt
 
 echo "[starting session]"
 sudo -v
