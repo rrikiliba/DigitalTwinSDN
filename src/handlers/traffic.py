@@ -8,19 +8,24 @@ async def traffic_reproduce(self, batch):
     for item in batch:
         src_host = item['src']
         dst_ip = item['dst']
-        total_size = item['size']
+        total_size = int(item['size'])
 
-        # Calculate payload
-        # 65507 is the maximum ping size, so if total_size is more
-        # divide it into more pings
-        payload_num = max(int(total_size) // 65507, 1)
-        payload_size = int(total_size) % 65507
+        # Maximum packet size allowed by ping
+        MTU = 65507
 
-        self.log.info(f"[>] Replaying: {src_host.name} -> {dst_ip} [Size: {payload_size}]")
-        
-        # Execute ping in background
+        # Calculate how many full packets and the leftover
+        full_pings = total_size // MTU
+        remainder = total_size % MTU
+
         node = self.get(src_host)
-        node.cmd(f"ping -c {payload_num} -s {payload_size} {dst_ip} &")
+
+        if full_pings > 0:
+            self.log.info(f"[>] Reproducing traffic: {src_host.name} -> {dst_ip} [{full_pings} x {MTU}]")
+            node.cmd(f"ping -c {full_pings} -s {MTU} {dst_ip} &")
+        
+        if remainder > 0:
+            self.log.info(f"[>] Reproducing traffic: {src_host.name} -> {dst_ip} [1 x {remainder}]")
+            node.cmd(f"ping -c 1 -s {remainder} {dst_ip} &")
 
 async def traffic_monitor(self):
             
