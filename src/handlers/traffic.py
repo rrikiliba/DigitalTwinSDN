@@ -4,19 +4,30 @@ STATS_URL = "http://localhost:6060/stats/flow"
 STATS_INTERVAL = 1
 
 async def traffic_reproduce(self, batch):
+    # MTU ridotta a 1400 per hping3 (più sicura per UDP)
+    MTU = 1400
+    # Limite per evitare il crash della VM (Fork Bomb)
+    MAX_PACKETS = 5
+
     for item in batch:
         src_host = item['src']
         dst_ip = item['dst']
-        total_size = int(item['size'])
-        
-        # Limita la dimensione per evitare di bloccare il kernel
-        MTU = 65507
-        size = min(total_size, MTU) 
+        remaining = int(item['size'])
 
-        # Esegue un singolo ping per segnalare l'attività del flusso
-        # Ridotto per evitare di saturare la CPU con troppi processi
-        self.log.info(f"[>] Sync traffic: {src_host.name} -> {dst_ip} ({total_size} bytes)")
-        src_host.cmd(f"ping -c 1 -s {size} {dst_ip} &")
+        self.log.info(f"[>] Reproducing flow: {src_host.name} -> {dst_ip} ({remaining} bytes)")
+
+        sent = 0
+        # Ciclo di frammentazione richiesto dal tuo compagno
+        while remaining > 0 and sent < MAX_PACKETS:
+            pkt_size = min(remaining, MTU)
+            
+            # hping3 --udp: non aspetta risposta e non raddoppia il traffico (no Echo Reply)
+            # -c 1: invia un singolo pacchetto
+            # -d: dimensione del payload
+            src_host.cmd(f"hping3 --udp -c 1 -d {pkt_size} {dst_ip} &")
+            
+            remaining -= pkt_size
+            sent += 1
 
 async def traffic_monitor(self):
     self.log.info("[+] Traffic Monitor Task Started")
