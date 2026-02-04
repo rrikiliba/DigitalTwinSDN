@@ -21,8 +21,6 @@ async def traffic_reproduce(self, batch):
 async def traffic_monitor(self):
     self.log.info("[+] Traffic Monitor Task Started")
     # Inizializza il dizionario se non esiste
-    if not hasattr(self, 'previous_byte_count_monitor'):
-        self.previous_byte_count_monitor = {}
 
     while True:
         await asyncio.sleep(STATS_INTERVAL)
