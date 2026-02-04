@@ -4,19 +4,45 @@ STATS_URL = "http://localhost:6060/stats/flow"
 STATS_INTERVAL = 1
 
 async def traffic_reproduce(self, batch):
+    """
+    Riproduce il traffico nel Digital Twin usando hping3 via UDP.
+    Sottrae l'overhead degli header (L2+L3+L4) per una precisione al singolo byte.
+    """
     for item in batch:
-        src_host = item['src']
+        src_host_name = item['src']
         dst_ip = item['dst']
-        total_size = int(item['size'])
-        
-        # Limita la dimensione per evitare di bloccare il kernel
-        MTU = 65507
-        size = min(total_size, MTU) 
+        total_delta_bytes = int(item['size'])
 
-        # Esegue un singolo ping per segnalare l'attività del flusso
-        # Ridotto per evitare di saturare la CPU con troppi processi
-        self.log.info(f"[>] Sync traffic: {src_host.name} -> {dst_ip} ({total_size} bytes)")
-        src_host.cmd(f"ping -c 1 -s {size} {dst_ip} &")
+        # --- CONFIGURAZIONE PRECISIONE ---
+        # Ethernet (14) + IP (20) + UDP (8) = 42 byte
+        OVERHEAD = 42
+        # MTU standard Ethernet
+        REAL_MTU = 1500 
+        # Payload massimo per pacchetto hping3 per arrivare a 1500 sul cavo
+        MAX_PAYLOAD = REAL_MTU - OVERHEAD # 1458
+
+        # Recupera il nodo Mininet
+        node = self.get(src_host_name)
+        if not node:
+            continue
+
+        # 1. Calcola quanti pacchetti "pieni" da 1500 byte servono
+        full_packets = total_delta_bytes // REAL_MTU
+        # 2. Calcola il resto (l'ultimo pacchetto non pieno)
+        remainder = total_delta_bytes % REAL_MTU
+
+        # Riproduzione pacchetti pieni (MTU 1500)
+        if full_packets > 0:
+            self.log.info(f"[>] Twin: {src_host_name} -> {dst_ip} | {full_packets} pkts x 1500B")
+            # -2: UDP mode, -d: payload size, -c: count, -i u1: flood mode (1us interval)
+            node.cmd(f"hping3 -2 -c {full_packets} -d {MAX_PAYLOAD} -i u1 {dst_ip} &")
+
+        # Riproduzione del resto (Last packet)
+        if remainder > 0:
+            # Sottraiamo l'overhead dal resto. Se il resto è < 42, il payload sarà 0.
+            last_payload = max(0, remainder - OVERHEAD)
+            self.log.info(f"[>] Twin: {src_host_name} -> {dst_ip} | Last pkt: {remainder}B (payload {last_payload})")
+            node.cmd(f"hping3 -2 -c 1 -d {last_payload} {dst_ip} &")
 
 async def traffic_monitor(self):
     self.log.info("[+] Traffic Monitor Task Started")
