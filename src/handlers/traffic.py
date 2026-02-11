@@ -1,7 +1,11 @@
 import time, asyncio, requests
 
 STATS_URL = "http://localhost:6060/stats/flow"
-STATS_INTERVAL = 1
+STATS_INTERVAL = 0.5
+
+OVERHEAD = 28
+MAX_PKT = 1500
+MIN_PKT = 64
 
 async def traffic_reproduce(self, batch):
     """
@@ -11,38 +15,59 @@ async def traffic_reproduce(self, batch):
     for item in batch:
         src_host_name = item['src']
         dst_ip = item['dst']
-        total_delta_bytes = int(item['size'])
+        delta_bytes = int(item['bytes'])
+        delta_packets = int(item['packets'])
 
-        # --- CONFIGURAZIONE PRECISIONE ---
-        # Ethernet (14) + IP (20) + UDP (8) = 42 byte
-        OVERHEAD = 42
-        # MTU standard Ethernet
-        REAL_MTU = 1500 
-        # Payload massimo per pacchetto hping3 per arrivare a 1500 sul cavo
-        MAX_PAYLOAD = REAL_MTU - OVERHEAD # 1458
+        #calculating avg packet size
+        if delta_packets <= 0 or delta_bytes <= 0:
+            continue
+
+        base_pkt = delta_bytes // delta_packets
+        normal_packets = max(0, delta_packets - 1)
+
+        pkt_size = int(max(MIN_PKT, min(MAX_PKT, base_pkt)))
+
+        generated = pkt_size * normal_packets
+        remaining = delta_bytes - generated
+
+        if remaining <= 0 and normal_packets > 0:
+            normal_packets -= 1
+            remaining = delta_bytes - (pkt_size * normal_packets)
+
+        remaining = int(max(MIN_PKT, min(MAX_PKT, remaining)))
+
+        payload_size = max(0, pkt_size - OVERHEAD)
+        last_pkt_size = max(0, remaining - OVERHEAD)
+
+        #calculating time distribution of packets
+        pps = delta_packets/STATS_INTERVAL
+        if pps <= 0:
+           continue
+
+        interval_us = int(1_000_000/pps)
+        #avoid too small intervals
+        interval_us = max (interval_us, 50) 
 
         # Recupera il nodo Mininet
         node = self.get(src_host_name)
         if not node:
             continue
 
-        # 1. Calcola quanti pacchetti "pieni" da 1500 byte servono
-        full_packets = total_delta_bytes // REAL_MTU
-        # 2. Calcola il resto (l'ultimo pacchetto non pieno)
-        remainder = total_delta_bytes % REAL_MTU
+        # Packet reproduction
+        node.cmd(
+            f"hping3 -2 -c {normal_packets} "
+            f"-d {payload_size} "
+            f"-i u{interval_us} "
+            f"{dst_ip} &"
+        )
 
-        # Riproduzione pacchetti pieni (MTU 1500)
-        if full_packets > 0:
-            self.log.info(f"[>] Twin: {src_host_name} -> {dst_ip} | {full_packets} pkts x 1500B")
-            # -2: UDP mode, -d: payload size, -c: count, -i u1: flood mode (1us interval)
-            node.cmd(f"hping3 -2 -c {full_packets} -d {MAX_PAYLOAD} -i u1 {dst_ip} &")
-
-        # Riproduzione del resto (Last packet)
-        if remainder > 0:
-            # Sottraiamo l'overhead dal resto. Se il resto è < 42, il payload sarà 0.
-            last_payload = max(0, remainder - OVERHEAD)
-            self.log.info(f"[>] Twin: {src_host_name} -> {dst_ip} | Last pkt: {remainder}B (payload {last_payload})")
-            node.cmd(f"hping3 -2 -c 1 -d {last_payload} {dst_ip} &")
+        #last packet to avoid byte discrepancies 
+        node.cmd(
+            f"hping3 -2 -c 1 "
+            f"-d {last_pkt_size} "
+            f"-i u{interval_us} "
+            f"{dst_ip} &"
+        )
 
 async def traffic_monitor(self):
     self.log.info("[+] Traffic Monitor Task Started")
@@ -67,6 +92,8 @@ async def traffic_monitor(self):
                             src_ip = match['ipv4_src']
                             dst_ip = match['ipv4_dst']
                             byte_count = flow.get('byte_count', 0)
+                            packet_count = flow.get('packet_count', 0)
+
                             flow_key = f"{src_ip}->{dst_ip}"
 
                             # --- DEDUPLICAZIONE ---
@@ -80,21 +107,26 @@ async def traffic_monitor(self):
                                            (link.intf2.node == host and link.intf1.node.dpid == dpid):
                                             src_host_node = host
                                             break
-                            
+
                             if not src_host_node:
                                 continue
 
-                            previous_bytes = self.previous_byte_count_monitor.get(flow_key, 0)
-                            delta_bytes = byte_count - previous_bytes
+                            prev_bytes, prev_packets = self.previous_stats.get(flow_key, (0,0))
+                            delta_bytes = byte_count - prev_bytes
+                            delta_packets = packet_count - prev_packets
 
-                            if delta_bytes > 0:
+                            if delta_bytes > 0 and delta_packets > 0:
                                 data_to_reproduce.append({
                                     "src": src_host_node,
                                     "dst": dst_ip,
-                                    "size": delta_bytes
+                                    "bytes": delta_bytes,
+                                    "packets": delta_packets
                                 })
 
-                            self.previous_byte_count_monitor[flow_key] = byte_count
+                            self.previous_stats[flow_key] = (
+                                byte_count,
+                                packet_count
+                            )
 
             if data_to_reproduce:
                 await traffic_reproduce(self, data_to_reproduce)

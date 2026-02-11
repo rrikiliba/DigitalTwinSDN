@@ -35,6 +35,9 @@ class DigitalTwin(Mininet):
         # List of event handlers the system can provide (for async topology updates)
         self.events = {}
 
+        #List of previous traffic in traffic monitoring and reproducing
+        self.previous_stats = {}
+
         super().__init__(**kwargs)
         
     async def callback(self, message):
