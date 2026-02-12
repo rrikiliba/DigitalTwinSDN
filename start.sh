@@ -2,6 +2,7 @@
 SESSION_NAME="DigitalTwinSDN"
 
 echo "[installing packages]"
+sudo apt-get update && sudo apt-get install hping3 -y
 pip install --disable-pip-version-check -r requirements.txt
 
 echo "[starting session]"
