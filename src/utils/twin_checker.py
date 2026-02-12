@@ -1,9 +1,10 @@
 import requests
 import shutil
 import time
+import sys
 
 RYU_API_HOST = "127.0.0.1"
-RYU_API_PORT = 8080
+RYU_API_PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 8080
 RYU_API_BASE_URL = f"http://{RYU_API_HOST}:{RYU_API_PORT}"
 POLL_INTERVAL = 2
 
