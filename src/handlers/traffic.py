@@ -10,7 +10,7 @@ MIN_PKT = 64
 async def traffic_reproduce(self, batch):
     """
     Riproduce il traffico nel Digital Twin usando hping3 via UDP.
-    Sottrae l'overhead degli header (L2+L3+L4) per una precisione al singolo byte.
+    Sottrae l'overhead degli header (L3+L4) per una precisione al singolo byte.
     """
     for item in batch:
         src_host_name = item['src']
