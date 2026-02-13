@@ -1,7 +1,8 @@
-import time, asyncio, requests
+import time, asyncio, requests, aiohttp
+import subprocess, traceback
 
 STATS_URL = "http://localhost:6060/stats/flow"
-STATS_INTERVAL = 0.5
+STATS_INTERVAL = 2
 
 OVERHEAD = 28
 MAX_PKT = 1500
@@ -12,6 +13,7 @@ async def traffic_reproduce(self, batch):
     Riproduce il traffico nel Digital Twin usando hping3 via UDP.
     Sottrae l'overhead degli header (L3+L4) per una precisione al singolo byte.
     """
+    
     for item in batch:
         src_host_name = item['src']
         dst_ip = item['dst']
@@ -53,21 +55,33 @@ async def traffic_reproduce(self, batch):
         if not node:
             continue
 
-        # Packet reproduction
-        node.cmd(
-            f"hping3 -2 -c {normal_packets} "
-            f"-d {payload_size} "
-            f"-i u{interval_us} "
-            f"{dst_ip} &"
-        )
+        print(f"payload size: {payload_size}; packet size: {last_pkt_size}")
 
-        #last packet to avoid byte discrepancies 
-        node.cmd(
-            f"hping3 -2 -c 1 "
-            f"-d {last_pkt_size} "
-            f"-i u{interval_us} "
-            f"{dst_ip} &"
-        )
+        subprocess.run(["nsenter", "-t", str(node.pid), "-n", "pkill", "-9", "hping3"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+        #packet reproduction
+        cmd = [
+            "nsenter", "-t", str(node.pid), "-n",
+            "hping3", "-2", "-q", "-n",
+            "-c", str(delta_packets),
+            "-d", str(payload_size),
+            "-i", f"u{interval_us}",
+            dst_ip
+        ]
+
+        subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+        cmd = [
+            "nsenter", "-t", str(node.pid), "-n",
+            "hping3", "-2", "-q", "-n",
+            "-c", str(1),
+            "-d", str(last_pkt_size),
+            "-i", f"u{interval_us}",
+            dst_ip
+        ]
+
+        subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        #si blocca comunque qui, migliore soluzione iperf mi sa
 
 async def traffic_monitor(self):
     print("[+] Traffic Monitor Task Started")
@@ -87,30 +101,33 @@ async def traffic_monitor(self):
                 url = f"{STATS_URL}/{dpid_int}"
                 
                 try:
-                    async with session.get(url, timeout=0.5) as response:
-                        if response.status_code == 200:
+                    async with session.get(url, timeout=1.5) as response:
+                        if response.status == 200:
                             data = await response.json()
+
                             flow_stats = data.get(str(dpid_int), [])
-                            #Debug
-                            self.log.info(f"[DEBUG] Chiavi ricevute da Ryu: {list(data.keys())}")
                     
                             for flow in flow_stats:
                                 match = flow.get('match', {})
-                                if 'ipv4_src' in match and 'ipv4_dst' in match and 'eth_src' in match:
-                                    src_mac = match ['eth_src']
-                                    src_ip = match['ipv4_src']
-                                    dst_ip = match['ipv4_dst']
+
+                                if not match:
+                                    continue
+
+                                if 'dl_src' in match and 'nw_dst' in match and 'nw_src' in match:
+                                    src_mac = match ['dl_src']
+                                    src_ip = match['nw_src']
+                                    dst_ip = match['nw_dst']
                                     byte_count = flow.get('byte_count', 0)
                                     packet_count = flow.get('packet_count', 0)
-                                    #Debug
-                                    self.log.info(f"[DEBUG] Analizzando flusso: {src_ip} -> {dst_ip}")
 
                                     flow_key = f"{dpid}:{src_ip}->{dst_ip}"
 
                                     # --- DEDUPLICAZIONE ---
                                     # Riproduce il traffico solo se l'host sorgente è collegato a QUESTO switch
                                     src_host_node = None
+
                                     for host in self.hosts:
+
                                         if src_mac and src_mac == host.MAC():
                                             src_host_node = host
                                             if src_ip and (not host.IP() or host.IP() == '0.0.0.0'):
@@ -149,6 +166,8 @@ async def traffic_monitor(self):
                         await traffic_reproduce(self, data_to_reproduce)
 
                 except Exception as e:
+                    print(f"[ERRORE CRITICO MONITOR]: {e}")
+                    traceback.print_exc()
                     pass
 
 def register_functions(obj):
