@@ -19,7 +19,7 @@ class WebsocketRPCServer:
             self.log.info("[_] Attempting connection...")
             
             try:
-                async with websockets.connect(self.url, ping_interval=20, ping_timeout=30, close_timeout=30) as websocket:
+                async with websockets.connect(self.url, ping_interval=None, ping_timeout=None, close_timeout=30) as websocket:
                     self.log.info("[+] Connection established. Listening for messages...")
                     reconnect_delay = 1
 

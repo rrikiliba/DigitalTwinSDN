@@ -70,69 +70,86 @@ async def traffic_reproduce(self, batch):
         )
 
 async def traffic_monitor(self):
-    self.log.info("[+] Traffic Monitor Task Started")
+    print("[+] Traffic Monitor Task Started")
     # Inizializza il dizionario se non esiste
 
-    while True:
-        await asyncio.sleep(STATS_INTERVAL)
-        data_to_reproduce = []
+    async with aiohttp.ClientSession() as session:
+        while True:
+            await asyncio.sleep(STATS_INTERVAL)
+            data_to_reproduce = []
+
+            if not self.dpid_to_name:
+                continue
         
-        try:
             # Cicla sugli switch conosciuti
             for dpid in list(self.dpid_to_name.keys()):
                 dpid_int = int(dpid, 16)
-                response = requests.get(f"{STATS_URL}/{dpid_int}", timeout=1)
+                url = f"{STATS_URL}/{dpid_int}"
                 
-                if response.status_code == 200:
-                    flow_stats = response.json().get(str(dpid_int), [])
+                try:
+                    async with session.get(url, timeout=0.5) as response:
+                        if response.status_code == 200:
+                            data = await response.json()
+                            flow_stats = data.get(str(dpid_int), [])
+                            #Debug
+                            self.log.info(f"[DEBUG] Chiavi ricevute da Ryu: {list(data.keys())}")
                     
-                    for flow in flow_stats:
-                        match = flow.get('match', {})
-                        if 'ipv4_src' in match and 'ipv4_dst' in match:
-                            src_ip = match['ipv4_src']
-                            dst_ip = match['ipv4_dst']
-                            byte_count = flow.get('byte_count', 0)
-                            packet_count = flow.get('packet_count', 0)
+                            for flow in flow_stats:
+                                match = flow.get('match', {})
+                                if 'ipv4_src' in match and 'ipv4_dst' in match and 'eth_src' in match:
+                                    src_mac = match ['eth_src']
+                                    src_ip = match['ipv4_src']
+                                    dst_ip = match['ipv4_dst']
+                                    byte_count = flow.get('byte_count', 0)
+                                    packet_count = flow.get('packet_count', 0)
+                                    #Debug
+                                    self.log.info(f"[DEBUG] Analizzando flusso: {src_ip} -> {dst_ip}")
 
-                            flow_key = f"{src_ip}->{dst_ip}"
+                                    flow_key = f"{dpid}:{src_ip}->{dst_ip}"
 
-                            # --- DEDUPLICAZIONE ---
-                            # Riproduce il traffico solo se l'host sorgente è collegato a QUESTO switch
-                            src_host_node = None
-                            for host in self.hosts:
-                                if host.IP() == src_ip:
-                                    # Verifica se il link dell'host porta a questo switch
-                                    for link in self.links:
-                                        if (link.intf1.node == host and link.intf2.node.dpid == dpid) or \
-                                           (link.intf2.node == host and link.intf1.node.dpid == dpid):
+                                    # --- DEDUPLICAZIONE ---
+                                    # Riproduce il traffico solo se l'host sorgente è collegato a QUESTO switch
+                                    src_host_node = None
+                                    for host in self.hosts:
+                                        if src_mac and src_mac == host.MAC():
                                             src_host_node = host
-                                            break
+                                            if src_ip and (not host.IP() or host.IP() == '0.0.0.0'):
+                                                host.setIP(src_ip)
 
-                            if not src_host_node:
-                                continue
+                                        if host.IP() == src_ip:
+                                            # Verifica se il link dell'host porta a questo switch
+                                            for link in self.links:
+                                                if (link.intf1.node == host and link.intf2.node.dpid == dpid) or \
+                                                    (link.intf2.node == host and link.intf1.node.dpid == dpid):
+                                                    src_host_node = host
+                                                    break
+                                
 
-                            prev_bytes, prev_packets = self.previous_stats.get(flow_key, (0,0))
-                            delta_bytes = byte_count - prev_bytes
-                            delta_packets = packet_count - prev_packets
+                                    if not src_host_node:
+                                        continue
 
-                            if delta_bytes > 0 and delta_packets > 0:
-                                data_to_reproduce.append({
-                                    "src": src_host_node,
-                                    "dst": dst_ip,
-                                    "bytes": delta_bytes,
-                                    "packets": delta_packets
-                                })
+                                    prev_bytes, prev_packets = self.previous_stats.get(flow_key, (0,0))
+                                    delta_bytes = byte_count - prev_bytes
+                                    delta_packets = packet_count - prev_packets
 
-                            self.previous_stats[flow_key] = (
-                                byte_count,
-                                packet_count
-                            )
+                                    if delta_bytes > 0 and delta_packets > 0:
+                                        data_to_reproduce.append({
+                                            "src": src_host_node.name,
+                                            "dst": dst_ip,
+                                            "bytes": delta_bytes,
+                                            "packets": delta_packets
+                                        })
 
-            if data_to_reproduce:
-                await traffic_reproduce(self, data_to_reproduce)
+                                    self.previous_stats[flow_key] = (
+                                        byte_count,
+                                        packet_count
+                                    )
 
-        except Exception as e:
-            self.log.error(f"[!] Error in traffic_monitor: {e}")
+                    if data_to_reproduce:
+                        await traffic_reproduce(self, data_to_reproduce)
+
+                except Exception as e:
+                    pass
 
 def register_functions(obj):
     obj.tasks.append(traffic_monitor)

@@ -12,8 +12,8 @@ class DigitalTwin(Mininet):
     """
     def __init__(self, name: str = 'TWN', **kwargs):
         # Configure logging for better output
-        logging.basicConfig(level=logging.INFO, format='[%(asctime)s] [%(levelname)s] [%(logger_name)s] %(message)s')
-        self.log = logging.LoggerAdapter(logging.getLogger(__name__), {'logger_name': name})
+        logging.basicConfig(level=logging.INFO, format='[%(asctime)s] [%(levelname)s] %(message)s')
+        self.log = logging.getLogger(name)
         
         # Data structures to map network identifiers (DPID, MAC) to Mininet node names
         self.dpid_to_name = {}
@@ -63,8 +63,22 @@ class DigitalTwin(Mininet):
         """Starts the Mininet network and its controllers."""
         self.log.info("[+] Starting Mininet...")
         return super().start()
-        
 
+async def main(net_obj, rpc_obj):
+    main_tasks = []
+
+    # 1. Registra il server RPC
+    main_tasks.append(asyncio.create_task(rpc_obj.serve_forever()))
+
+    # 2. Registra i monitor (es. traffic_monitor)
+    for task_func in net_obj.tasks:
+        # Passiamo l'oggetto 'net_obj' alla funzione
+        main_tasks.append(asyncio.create_task(task_func(net_obj)))
+
+    print(f"DEBUG: Avvio di {len(main_tasks)} task in parallelo...")
+    
+    # Questo avvia tutto e non si ferma finché non chiudi il programma
+    await asyncio.gather(*main_tasks)
 
 if __name__ == "__main__":
     from utils.rpc_server import WebsocketRPCServer
@@ -89,12 +103,12 @@ if __name__ == "__main__":
     #       - serve RPC requests (topology changes)
     #       - start all tasks (traffic polling)
     try:
-        loop = asyncio.get_event_loop()
 
-        for task in net.tasks:
-            loop.create_task(task(net))
-
-        loop.run_until_complete(rpc.serve_forever())
+        #main_tasks = [task(net) for task in net.tasks]
+        #main_tasks.append(rpc.serve_forever()
+        #loop.run_until_complete(asyncio.gather(*main_tasks))
+        
+        asyncio.run(main(net, rpc))
     except KeyboardInterrupt:
         rpc.log.info("[-] Client stopped by user.")
     finally:
