@@ -37,9 +37,9 @@ CMD2="clear; sudo python3 src/digital_twin.py"
 # 3: Check and print topology/network stats of the twin
 CMD3="clear; sudo python3 src/utils/twin_checker.py"
 # 4: Twin ryu controller
-CMD4="clear; ryu-manager ryu.app.simple_switch_13 ryu.app.rest_topology ryu.app.ofctl_rest --observe-links"
+CMD4="clear; ryu-manager src/simple_switch_13.py ryu.app.rest_topology ryu.app.ofctl_rest --observe-links"
 # 5: Live ryu controller
-CMD5="clear; ryu-manager ryu.app.gui_topology ryu.app.ws_topology ryu.app.rest_topology ryu.app.ofctl_rest ryu.app.simple_switch_13 --wsapi-port 6060 --ofp-tcp-listen-port 6666 --observe-links"
+CMD5="clear; ryu-manager ryu.app.gui_topology ryu.app.ws_topology ryu.app.rest_topology ryu.app.ofctl_rest src/simple_switch_13.py --wsapi-port 6060 --ofp-tcp-listen-port 6666 --observe-links"
 
 # Either attach to tmux session or create it
 tmux has-session -t $SESSION_NAME 2>/dev/null
