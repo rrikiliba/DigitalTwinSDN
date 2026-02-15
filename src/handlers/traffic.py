@@ -13,75 +13,50 @@ async def traffic_reproduce(self, batch):
     Riproduce il traffico nel Digital Twin usando hping3 via UDP.
     Sottrae l'overhead degli header (L3+L4) per una precisione al singolo byte.
     """
+
+    per_node_flows = {}
+
+    print (f"Batch: {batch}")
     
     for item in batch:
+
         src_host_name = item['src']
         dst_ip = item['dst']
         delta_bytes = int(item['bytes'])
         delta_packets = int(item['packets'])
 
+        if src_host_name not in per_node_flows:
+            per_node_flows[src] = []
+        per_node_flows[src].append(item)
+
         #calculating avg packet size
         if delta_packets <= 0 or delta_bytes <= 0:
             continue
 
-        base_pkt = delta_bytes // delta_packets
-        normal_packets = max(0, delta_packets - 1)
+        #calculating time distribution of bytes
+        bps = delta_bytes/STATS_INTERVAL
+        mbps = (bps * 8) / 1_000_000
 
-        pkt_size = int(max(MIN_PKT, min(MAX_PKT, base_pkt)))
+        MAX_MBPS = 50
+        mbps = min(mbps, MAX_MBPS)
 
-        generated = pkt_size * normal_packets
-        remaining = delta_bytes - generated
+        interval_reproduce = delta_bytes / (mbps * (1_000_000 / 8)) 
 
-        if remaining <= 0 and normal_packets > 0:
-            normal_packets -= 1
-            remaining = delta_bytes - (pkt_size * normal_packets)
-
-        remaining = int(max(MIN_PKT, min(MAX_PKT, remaining)))
-
-        payload_size = max(0, pkt_size - OVERHEAD)
-        last_pkt_size = max(0, remaining - OVERHEAD)
-
-        #calculating time distribution of packets
-        pps = delta_packets/STATS_INTERVAL
-        if pps <= 0:
+        if bps <= 0:
            continue
-
-        interval_us = int(1_000_000/pps)
-        #avoid too small intervals
-        interval_us = max (interval_us, 50) 
 
         # Recupera il nodo Mininet
         node = self.get(src_host_name)
         if not node:
             continue
 
-        print(f"payload size: {payload_size}; packet size: {last_pkt_size}")
+        node.sendCmd('pkill -9 -f "iperf -c"')
 
-        subprocess.run(["nsenter", "-t", str(node.pid), "-n", "pkill", "-9", "hping3"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        duration = STATS_INTERVAL - 0.2
+        iperf_cmd = f"iperf -c {dst_ip} -u -b {mbps:.2f}M -t {duration:.1f} > /dev/null 2>&1 &"
 
-        #packet reproduction
-        cmd = [
-            "nsenter", "-t", str(node.pid), "-n",
-            "hping3", "-2", "-q", "-n",
-            "-c", str(delta_packets),
-            "-d", str(payload_size),
-            "-i", f"u{interval_us}",
-            dst_ip
-        ]
-
-        subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-
-        cmd = [
-            "nsenter", "-t", str(node.pid), "-n",
-            "hping3", "-2", "-q", "-n",
-            "-c", str(1),
-            "-d", str(last_pkt_size),
-            "-i", f"u{interval_us}",
-            dst_ip
-        ]
-
-        subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        #si blocca comunque qui, migliore soluzione iperf mi sa
+        print("DEBUG: Esecuzione iperf su", src_host_name)
+        node.cmd(iperf_cmd)
 
 async def traffic_monitor(self):
     print("[+] Traffic Monitor Task Started")
@@ -162,13 +137,13 @@ async def traffic_monitor(self):
                                         packet_count
                                     )
 
-                    if data_to_reproduce:
-                        await traffic_reproduce(self, data_to_reproduce)
-
                 except Exception as e:
                     print(f"[ERRORE CRITICO MONITOR]: {e}")
                     traceback.print_exc()
                     pass
+
+            if data_to_reproduce:
+                        asyncio.create_task(traffic_reproduce(self, data_to_reproduce))
 
 def register_functions(obj):
     obj.tasks.append(traffic_monitor)

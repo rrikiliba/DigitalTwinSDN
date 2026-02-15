@@ -9,7 +9,12 @@ class DigitalTwin(Mininet):
     """
     A Mininet extension that builds and manages a network topology 
     dynamically based on external events (from a ryu SDN controller).
-    """
+    """    
+    
+    def start_iperf_servers(self):
+        for host in self.hosts:
+            host.cmd("iperf -s -u -D")
+
     def __init__(self, name: str = 'TWN', **kwargs):
         # Configure logging for better output
         logging.basicConfig(level=logging.INFO, format='[%(asctime)s] [%(levelname)s] %(message)s')
@@ -99,6 +104,8 @@ if __name__ == "__main__":
     rpc = WebsocketRPCServer('ws://127.0.0.1:6060/v1.0/topology/ws', callback=net.callback)
     rpc.log.info("[+] Starting RPC Server loop. Waiting for events...")
 
+    net.start_iperf_servers()
+
     # 4. Start the event loop to 
     #       - serve RPC requests (topology changes)
     #       - start all tasks (traffic polling)
@@ -109,6 +116,7 @@ if __name__ == "__main__":
         #loop.run_until_complete(asyncio.gather(*main_tasks))
         
         asyncio.run(main(net, rpc))
+
     except KeyboardInterrupt:
         rpc.log.info("[-] Client stopped by user.")
     finally:
