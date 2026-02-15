@@ -107,14 +107,13 @@ def pretty_print_topology(switches, links, hosts):
         ips = h.get('ipv4', [])
         
         # Fallback logic: if Ryu topology doesn't have the IP, check if it was found in flows
-        ip_str = ips[0] if ips else discovered_ips.get(mac, "No IP Assigned (Will appear as traffic is generated)")
+        ip_str = ips[0] if ips else discovered_ips.get(mac, "No IP Assigned")
         
         # Indicator if the IP was found through flow discovery
-        discovery_tag = "" if ips else (" (Found in Flows)" if mac in discovered_ips else "")
         
         port_info = h.get('port', {})
         connected_to = f"SW {port_info.get('dpid', '?')} Port {port_info.get('port_no', '?')}"
-        print(f"  MAC: {mac} | IP: {ip_str:15}{discovery_tag}\n-> Connected To: {connected_to}")
+        print(f"  MAC: {mac} | IP: {ip_str:15}\n  -> Connected To: {connected_to}")
 
     # 3. LINKS
     print(f"\n[3] INFRASTRUCTURE LINKS ({len(links)})")
@@ -124,9 +123,9 @@ def pretty_print_topology(switches, links, hosts):
         print(f"  {src} <---> {dst}")
 
     # 4. ACTIVE IP FLOWS
-    print(f"\n[4] ACTIVE IP FLOWS (Ryu Knowledge)")
+    print(f"\n[4] ACTIVE IP FLOWS")
     if not flows:
-        print("  (No IP flows recognized. They will appear as traffic is generated)")
+        print("  (No IP flows recognized. Will appear as traffic is generated)")
     else:
         for f in set(flows[:10]): # Use set to remove visual duplicates
             print(f"  {f}")
