@@ -1,7 +1,4 @@
-import asyncio
-import websockets
-import json
-import logging
+import asyncio, websockets, json, logging
 
 class WebsocketRPCServer:
     def __init__(self, url: str, name: str = 'RPC', callback=None):
@@ -19,7 +16,7 @@ class WebsocketRPCServer:
             self.log.info("[_] Attempting connection...")
             
             try:
-                async with websockets.connect(self.url, ping_interval=None, ping_timeout=None, close_timeout=30) as websocket:
+                async with websockets.connect(self.url, ping_interval=30, ping_timeout=60, close_timeout=60) as websocket:
                     self.log.info("[+] Connection established. Listening for messages...")
                     reconnect_delay = 1
 

@@ -1,149 +1,143 @@
-import time, asyncio, requests, aiohttp
-import subprocess, traceback
+import time, asyncio, aiohttp
 
-STATS_URL = "http://localhost:6060/stats/flow"
+# URL and Interval Configuration
+STATS_URL = "http://localhost:6060/stats/flow" 
 STATS_INTERVAL = 2
-
-OVERHEAD = 28
-MAX_PKT = 1500
-MIN_PKT = 64
 
 async def traffic_reproduce(self, batch):
     """
-    Riproduce il traffico nel Digital Twin usando hping3 via UDP.
-    Sottrae l'overhead degli header (L3+L4) per una precisione al singolo byte.
+    Reproduce traffic batch in the twin net via iperf using Kbps.
     """
+    if not batch:
+        return
 
-    per_node_flows = {}
-
-    print (f"Batch: {batch}")
+    self.log.info(f"[+] Reproducing traffic for {len(batch)} flows")
     
     for item in batch:
+        try:
+            src_host_name = item['src']
+            dst_ip = item['dst']
+            delta_bytes = item['bytes']
 
-        src_host_name = item['src']
-        dst_ip = item['dst']
-        delta_bytes = int(item['bytes'])
-        delta_packets = int(item['packets'])
+            # Calculate Kbps: (Bytes * 8 bits) / (Interval in seconds * 1,000)
+            kbps = (delta_bytes * 8) / (STATS_INTERVAL * 1_000)
 
-        if src_host_name not in per_node_flows:
-            per_node_flows[src] = []
-        per_node_flows[src].append(item)
+            # Minimum threshold to avoid useless iperf processes (e.g., 0.1 Kbps)
+            if kbps < 0.1: 
+                continue
 
-        #calculating avg packet size
-        if delta_packets <= 0 or delta_bytes <= 0:
-            continue
+            # Limit to avoid CPU overload (50 Mbps = 50,000 Kbps)
+            MAX_KBPS = 50000 
+            kbps = min(kbps, MAX_KBPS)
 
-        #calculating time distribution of bytes
-        bps = delta_bytes/STATS_INTERVAL
-        mbps = (bps * 8) / 1_000_000
+            # Retrieve Mininet node object from Digital Twin
+            node = self.net.get(src_host_name) if hasattr(self, 'net') else self.get(src_host_name)
+            
+            if not node:
+                self.log.error(f"[!] Node '{src_host_name}' not found in the system!")
+                continue
 
-        MAX_MBPS = 50
-        mbps = min(mbps, MAX_MBPS)
-
-        interval_reproduce = delta_bytes / (mbps * (1_000_000 / 8)) 
-
-        if bps <= 0:
-           continue
-
-        # Recupera il nodo Mininet
-        node = self.get(src_host_name)
-        if not node:
-            continue
-
-        node.sendCmd('pkill -9 -f "iperf -c"')
-
-        duration = STATS_INTERVAL - 0.2
-        iperf_cmd = f"iperf -c {dst_ip} -u -b {mbps:.2f}M -t {duration:.1f} > /dev/null 2>&1 &"
-
-        print("DEBUG: Esecuzione iperf su", src_host_name)
-        node.cmd(iperf_cmd)
+            duration = max(0.5, STATS_INTERVAL - 0.2)
+            
+            # UDP iperf command using Kbps (-b ...K)
+            cmd = [
+                'iperf', '-c', dst_ip, 
+                '-u', 
+                '-b', f'{kbps:.2f}K', 
+                '-t', f'{duration:.1f}'
+            ]
+            
+            self.log.info(f"[+] {src_host_name} -> {dst_ip} @ {kbps:.2f} Kbps")
+            node.popen(cmd)
+            
+        except Exception as e:
+            self.log.error(f"[!] Critical error in reproduction: {e}")
 
 async def traffic_monitor(self):
-    print("[+] Traffic Monitor Task Started")
-    # Inizializza il dizionario se non esiste
+    """
+    Monitors flow statistics from the Ryu controller and calculates deltas.
+    """
+    self.log.info(f"[+] Traffic Monitor Started (Units: Kbps)")
+    
+    if not hasattr(self, 'previous_stats'):
+        self.previous_stats = {}
 
     async with aiohttp.ClientSession() as session:
         while True:
-            await asyncio.sleep(STATS_INTERVAL)
+            start_time = time.time()
             data_to_reproduce = []
 
-            if not self.dpid_to_name:
+            dpid_map = getattr(self, 'dpid_to_name', None)
+            if not dpid_map:
+                await asyncio.sleep(2)
                 continue
         
-            # Cicla sugli switch conosciuti
-            for dpid in list(self.dpid_to_name.keys()):
-                dpid_int = int(dpid, 16)
-                url = f"{STATS_URL}/{dpid_int}"
-                
+            for dpid_str in list(dpid_map.keys()):
                 try:
-                    async with session.get(url, timeout=1.5) as response:
-                        if response.status == 200:
-                            data = await response.json()
-
-                            flow_stats = data.get(str(dpid_int), [])
+                    dpid_int = int(dpid_str, 16)
+                    url = f"{STATS_URL}/{dpid_int}"
                     
-                            for flow in flow_stats:
-                                match = flow.get('match', {})
+                    async with session.get(url, timeout=1.5) as response:
+                        if response.status != 200: continue
 
-                                if not match:
-                                    continue
+                        data = await response.json()
+                        flow_stats = data.get(str(dpid_int), [])
 
-                                if 'dl_src' in match and 'nw_dst' in match and 'nw_src' in match:
-                                    src_mac = match ['dl_src']
-                                    src_ip = match['nw_src']
-                                    dst_ip = match['nw_dst']
-                                    byte_count = flow.get('byte_count', 0)
-                                    packet_count = flow.get('packet_count', 0)
+                        for flow in flow_stats:
+                            match = flow.get('match', {})
+                            
+                            src_ip = match.get('ipv4_src') or match.get('nw_src')
+                            dst_ip = match.get('ipv4_dst') or match.get('nw_dst')
+                            
+                            if not src_ip or not dst_ip:
+                                continue
 
-                                    flow_key = f"{dpid}:{src_ip}->{dst_ip}"
+                            target_host = None
+                            for h in self.hosts:
+                                if h.IP() == src_ip:
+                                    is_directly_connected = False
+                                    for intf in h.intfList():
+                                        if intf.link:
+                                            n1, n2 = intf.link.intf1.node, intf.link.intf2.node
+                                            neighbor = n2 if n1 == h else n1
+                                            neighbor_dpid = getattr(neighbor, 'dpid', None)
+                                            if neighbor_dpid and int(str(neighbor_dpid), 16) == dpid_int:
+                                                is_directly_connected = True
+                                                break
+                                    
+                                    if is_directly_connected:
+                                        target_host = h
+                                        break
+                                    
+                            if not target_host:
+                                continue
 
-                                    # --- DEDUPLICAZIONE ---
-                                    # Riproduce il traffico solo se l'host sorgente è collegato a QUESTO switch
-                                    src_host_node = None
+                            byte_count = flow.get('byte_count', 0)
+                            flow_key = f"{dpid_int}:{src_ip}->{dst_ip}"
 
-                                    for host in self.hosts:
+                            if flow_key not in self.previous_stats:
+                                self.previous_stats[flow_key] = byte_count
+                                continue
 
-                                        if src_mac and src_mac == host.MAC():
-                                            src_host_node = host
-                                            if src_ip and (not host.IP() or host.IP() == '0.0.0.0'):
-                                                host.setIP(src_ip)
+                            prev_bytes = self.previous_stats[flow_key]
+                            delta_bytes = byte_count - prev_bytes
+                            self.previous_stats[flow_key] = byte_count
 
-                                        if host.IP() == src_ip:
-                                            # Verifica se il link dell'host porta a questo switch
-                                            for link in self.links:
-                                                if (link.intf1.node == host and link.intf2.node.dpid == dpid) or \
-                                                    (link.intf2.node == host and link.intf1.node.dpid == dpid):
-                                                    src_host_node = host
-                                                    break
-                                
-
-                                    if not src_host_node:
-                                        continue
-
-                                    prev_bytes, prev_packets = self.previous_stats.get(flow_key, (0,0))
-                                    delta_bytes = byte_count - prev_bytes
-                                    delta_packets = packet_count - prev_packets
-
-                                    if delta_bytes > 0 and delta_packets > 0:
-                                        data_to_reproduce.append({
-                                            "src": src_host_node.name,
-                                            "dst": dst_ip,
-                                            "bytes": delta_bytes,
-                                            "packets": delta_packets
-                                        })
-
-                                    self.previous_stats[flow_key] = (
-                                        byte_count,
-                                        packet_count
-                                    )
+                            if delta_bytes > 0:
+                                data_to_reproduce.append({
+                                    "src": target_host.name,
+                                    "dst": dst_ip,
+                                    "bytes": delta_bytes
+                                })
 
                 except Exception as e:
-                    print(f"[ERRORE CRITICO MONITOR]: {e}")
-                    traceback.print_exc()
-                    pass
+                    self.log.error(f"[!] Error polling DPID {dpid_str}: {e}")
 
             if data_to_reproduce:
-                        asyncio.create_task(traffic_reproduce(self, data_to_reproduce))
+                asyncio.ensure_future(traffic_reproduce(self, data_to_reproduce))
+            
+            elapsed = time.time() - start_time
+            await asyncio.sleep(max(0.1, STATS_INTERVAL - elapsed))
 
 def register_functions(obj):
     obj.tasks.append(traffic_monitor)

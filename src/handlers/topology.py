@@ -1,4 +1,5 @@
-import requests, asyncio
+import asyncio
+import aiohttp
 from mininet.node import OVSSwitch
 
 def event_switch_enter(self, switch_data):
@@ -41,20 +42,42 @@ def event_switch_enter(self, switch_data):
     self.log.info(f"[=] Ports reported: {', '.join(port_names)}")
 
 
-async def poll_ip(mac, host):
+async def poll_ip(mac, host, log=None):
+    """Polls the Ryu API to discover the IP address assigned to a host."""
     HOSTS_URL = "http://localhost:6060/v1.0/topology/hosts"
-    while True:
-        try:
-            response = requests.get(HOSTS_URL, timeout=2)
-            for h in response.json():
-                if h.get('mac') == mac:
-                    ipv4 = h.get('ipv4', [])
-                    if len(ipv4) > 0:
-                        host.setIP(ipv4[0])
-                        return
+    
+    # Use aiohttp.ClientSession as a context manager.
+    # Creating it outside the loop is more efficient (reuses TCP connection).
+    async with aiohttp.ClientSession() as session:
+        while True:
+            try:
+                # Standard total timeout passed as float
+                async with session.get(HOSTS_URL, timeout=2) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        for h in data:
+                            if h.get('mac') == mac:
+                                ipv4 = h.get('ipv4', [])
+                                if len(ipv4) > 0:
+                                    ip = ipv4[0]
+                                    host.setIP(ip)
+                                    intf = host.defaultIntf()
+                                    
+                                    # 1. Bring the interface up
+                                    host.cmd(f'ifconfig {intf} {ip} up')
+                                    
+                                    # 2. FORCE RYU TO SEE THE HOST (Fundamental)
+                                    # Send an ARP packet to announce the presence of the IP
+                                    host.cmd(f'arping -c 2 -A -I {intf} {ip}')
+                                    if log is None:
+                                        log = print
+                                    log(f'[+] {host} has been assigned ip {ip}')
+                                    return
+            except Exception as e:
+                print(f"Poll Error: {e}")
+            
+            # Non-blocking sleep
             await asyncio.sleep(2)
-        except Exception:
-            pass
 
 def event_host_add(self, host_data):
     """Handles a new host being detected and linked to a switch."""
@@ -89,6 +112,7 @@ def event_host_add(self, host_data):
         if len(ipv4) > 0:
             # Use the first IPv4 address if available
             host_params['ip'] = ipv4[0]
+        else:
             spawn_poll_ip_task = True
 
 
@@ -97,9 +121,8 @@ def event_host_add(self, host_data):
 
         if spawn_poll_ip_task:
             loop = asyncio.get_event_loop()
-            loop.create_task(poll_ip(mac, new_host))
+            loop.create_task(poll_ip(mac, new_host, log=self.log.info))
             self.log.info(f"[!] New host does not have an IP address. Now polling for changes...")
-
 
 
     # Find the switch name associated with the DPID
@@ -205,6 +228,7 @@ def event_link_add(self, link_data):
         self.log.warning(f"[!] Error creating link between {src_name} and {dst_name}: {e}")
 
 def event_link_delete(self, link_data):
+    """Handles the removal of a switch-to-switch link."""
     src_dpid = link_data.get("src", {}).get("dpid")
     dst_dpid = link_data.get("dst", {}).get("dpid")
 
@@ -227,6 +251,7 @@ def event_link_delete(self, link_data):
         self.delLink(link)
 
 def event_switch_leave(self, switch_data):
+    """Handles a switch leaving the network."""
     dpid = switch_data.get("dpid")
     name = self.dpid_to_name.get(dpid)
 
@@ -252,6 +277,7 @@ def event_switch_leave(self, switch_data):
     del self.dpid_to_name[dpid]
 
 def register_functions(obj):
+    """Registers all topology event handlers to the main object."""
     obj.events = {
         **obj.events,
         "event_switch_enter": event_switch_enter,
