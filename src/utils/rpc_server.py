@@ -1,7 +1,4 @@
-import asyncio
-import websockets
-import json
-import logging
+import asyncio, websockets, json, logging
 
 class WebsocketRPCServer:
     def __init__(self, url: str, name: str = 'RPC', callback=None):
