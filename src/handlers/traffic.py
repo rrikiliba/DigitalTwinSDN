@@ -47,7 +47,7 @@ async def traffic_reproduce(self, batch):
                 '-t', f'{duration:.1f}'
             ]
             
-            self.log.info(f"[+] {src_host_name} -> {dst_ip} @ {kbps:.2f} Kbps")
+            self.log.info(f"[=] {src_host_name} -> {dst_ip} @ {kbps:.2f} Kbps")
             node.popen(cmd)
             
         except Exception as e:
@@ -85,30 +85,55 @@ async def traffic_monitor(self):
 
                         for flow in flow_stats:
                             match = flow.get('match', {})
-                            
+                
+                            # self.log.info(f'flow: {flow}')
+
+                            # ignore non-ipv4 traffic
+                            if match.get('dl_type') != 2048 and match.get('eth_type') != 2048:
+                                continue
+
                             src_ip = match.get('ipv4_src') or match.get('nw_src')
                             dst_ip = match.get('ipv4_dst') or match.get('nw_dst')
                             
                             if not src_ip or not dst_ip:
                                 continue
 
+                            # Loop through all hosts known to the Mininet/Digital Twin network to find src host
                             target_host = None
                             for h in self.hosts:
+                                # Check if this host's IP matches the source IP found in the OpenFlow flow entry
                                 if h.IP() == src_ip:
                                     is_directly_connected = False
+                                    
+                                    # Examine every physical/virtual interface attached to this host
                                     for intf in h.intfList():
+                                        # If the interface is connected to a link...
                                         if intf.link:
+                                            # Get the two nodes at the ends of this link (e.g., Host1 and Switch1)
                                             n1, n2 = intf.link.intf1.node, intf.link.intf2.node
+                                            
+                                            # Identify which node is the 'neighbor' (the one that isn't the host itself)
                                             neighbor = n2 if n1 == h else n1
+                                            
+                                            # Get the DPID (Data Path ID) of that neighbor switch
                                             neighbor_dpid = getattr(neighbor, 'dpid', None)
+                                            
+                                            # Check if the neighbor is a switch and if its ID matches 
+                                            # the current switch (dpid_int) we are currently polling.
                                             if neighbor_dpid and int(str(neighbor_dpid), 16) == dpid_int:
+                                                # If matched, this host is physically plugged into the current switch
                                                 is_directly_connected = True
                                                 break
                                     
+                                    # If the host is directly connected to this switch, we mark it as the 'target_host'
+                                    # This host will be the one used to run the 'iperf' command.
                                     if is_directly_connected:
                                         target_host = h
                                         break
                                     
+                            # If target_host is still None, it means the traffic is 'transit traffic' 
+                            # (passing through this switch from another one). 
+                            # We 'continue' (skip) to avoid reproducing the same traffic multiple times.
                             if not target_host:
                                 continue
 
