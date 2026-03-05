@@ -16,7 +16,7 @@ run_mininet() {
     clear
 
     # Prompt the user
-    read -r -p "Enter your mininet topology (empty for default [$default_topo]):\n" input_topo
+    read -r -p "Enter your mininet topology (empty for default [$default_topo]):" input_topo
 
     # Execute with the user's input or the default
     if [[ -z "$input_topo" ]]; then
